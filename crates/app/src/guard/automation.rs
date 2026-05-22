@@ -7,24 +7,46 @@ use uiautomation::UIAutomation;
 use uiautomation::patterns::{UITextPattern, UIValuePattern};
 
 pub(crate) fn read_focused() -> Result<String> {
-    let automation = UIAutomation::new().map_err(|e| anyhow!("UI Automation init failed: {e}"))?;
-    let element = automation
-        .get_focused_element()
-        .map_err(|e| anyhow!("no focused element: {e}"))?;
+    if let Some(text) = read_via_uia()
+        && !text.trim().is_empty()
+    {
+        return Ok(text);
+    }
+    read_via_clipboard()
+}
+
+fn read_via_uia() -> Option<String> {
+    let automation = UIAutomation::new().ok()?;
+    let element = automation.get_focused_element().ok()?;
 
     if let Ok(value) = element.get_pattern::<UIValuePattern>()
         && let Ok(text) = value.get_value()
         && !text.is_empty()
     {
-        return Ok(text);
+        return Some(text);
     }
     if let Ok(text_pattern) = element.get_pattern::<UITextPattern>()
         && let Ok(range) = text_pattern.get_document_range()
         && let Ok(text) = range.get_text(-1)
     {
-        return Ok(text);
+        return Some(text);
     }
-    Err(anyhow!("the focused control does not expose readable text"))
+    None
+}
+
+fn read_via_clipboard() -> Result<String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| anyhow!("input init: {e}"))?;
+    ctrl_combo(&mut enigo, 'a')?;
+    ctrl_combo(&mut enigo, 'c')?;
+    sleep(Duration::from_millis(150));
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| anyhow!("clipboard: {e}"))?;
+    let text = clipboard
+        .get_text()
+        .map_err(|e| anyhow!("clipboard read: {e}"))?;
+    if text.trim().is_empty() {
+        return Err(anyhow!("the focused field has no readable text"));
+    }
+    Ok(text)
 }
 
 pub(crate) fn write_focused(text: &str) -> Result<()> {
@@ -58,14 +80,6 @@ pub(crate) fn read_selection() -> Result<String> {
     clipboard
         .get_text()
         .map_err(|e| anyhow!("clipboard read: {e}"))
-}
-
-pub(crate) fn show_popup(title: &str, body: &str) {
-    rfd::MessageDialog::new()
-        .set_title(title)
-        .set_description(body)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
 }
 
 fn ctrl_combo(enigo: &mut Enigo, letter: char) -> Result<()> {

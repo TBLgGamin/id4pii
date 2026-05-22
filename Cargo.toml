@@ -27,7 +27,7 @@ tray-icon = "0.24"
 global-hotkey = "0.8"
 arboard = "3"
 enigo = "0.6"
-rfd = "0.17"
+wry = "0.55"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
