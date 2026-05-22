@@ -7,7 +7,7 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::TensorRef;
 use serde::Deserialize;
-use tokenizers::Tokenizer;
+use tiktoken_rs::CoreBPE;
 
 use crate::error::{Error, Result};
 use crate::labels::{Category, load_label_map};
@@ -28,7 +28,7 @@ struct ModelConfig {
 
 pub struct Detector {
     session: Session,
-    tokenizer: Tokenizer,
+    tokenizer: CoreBPE,
     labels: Vec<Option<Category>>,
     output_name: String,
 }
@@ -44,12 +44,11 @@ impl fmt::Debug for Detector {
 
 impl Detector {
     pub fn load(model_dir: &Path, model_file: &str, threads: usize) -> Result<Self> {
-        let tokenizer_path = model_dir.join("tokenizer.json");
-        let tokenizer_handle = std::thread::spawn(move || -> Result<Tokenizer> {
+        let tokenizer_handle = std::thread::spawn(|| -> Result<CoreBPE> {
             let started = std::time::Instant::now();
-            let tokenizer = Tokenizer::from_file(tokenizer_path)
-                .map_err(|e| Error::Tokenizer(e.to_string()))?;
-            tracing::debug!(elapsed = ?started.elapsed(), "tokenizer loaded");
+            let tokenizer =
+                tiktoken_rs::o200k_base().map_err(|e| Error::Tokenizer(e.to_string()))?;
+            tracing::debug!(elapsed = ?started.elapsed(), "tokenizer ready");
             Ok(tokenizer)
         });
 
@@ -89,18 +88,26 @@ impl Detector {
             return Ok(Vec::new());
         }
 
-        let encoding = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        let tokens = self.tokenizer.encode_ordinary(text);
+        let token_count = tokens.len();
+        if token_count == 0 {
+            return Ok(Vec::new());
+        }
 
-        let ids: Vec<i64> = encoding.get_ids().iter().map(|&v| i64::from(v)).collect();
-        let mask: Vec<i64> = encoding
-            .get_attention_mask()
-            .iter()
-            .map(|&v| i64::from(v))
-            .collect();
-        let token_count = ids.len();
+        let ids: Vec<i64> = tokens.iter().map(|&v| i64::from(v)).collect();
+        let mask: Vec<i64> = vec![1; token_count];
+
+        let mut offsets: Vec<usize> = Vec::with_capacity(token_count + 1);
+        offsets.push(0);
+        let mut cursor = 0_usize;
+        for &token in &tokens {
+            cursor += self
+                .tokenizer
+                .decode_bytes(&[token])
+                .map_err(|e| Error::Tokenizer(e.to_string()))?
+                .len();
+            offsets.push(cursor);
+        }
 
         let run_start = std::time::Instant::now();
         let outputs = self.session.run(inputs![
@@ -119,20 +126,15 @@ impl Detector {
             )));
         }
 
-        let offsets = encoding.get_offsets();
-        let special = encoding.get_special_tokens_mask();
         let mut spans: Vec<PiiSpan> = Vec::new();
         let mut current: Option<SpanBuilder> = None;
 
         for token_index in 0..token_count {
-            if special.get(token_index).copied().unwrap_or(0) == 1 {
-                flush(&mut current, &mut spans, text);
-                continue;
-            }
             let row = &logits[token_index * label_count..(token_index + 1) * label_count];
             let (best, prob) = argmax_softmax(row);
             let category = self.labels.get(best).copied().flatten();
-            let (start, end) = offsets.get(token_index).copied().unwrap_or((0, 0));
+            let start = offsets[token_index];
+            let end = offsets[token_index + 1];
 
             match category {
                 Some(category) if start != end => match current.as_mut() {
@@ -206,4 +208,33 @@ fn argmax_softmax(row: &[f32]) -> (usize, f32) {
     }
     let prob = if sum > 0.0 { 1.0 / sum } else { 0.0 };
     (best_index, prob)
+}
+
+#[cfg(test)]
+#[allow(clippy::unreadable_literal)]
+mod tests {
+    #[test]
+    fn tokenizer_matches_privacy_filter_reference() {
+        let bpe = tiktoken_rs::o200k_base().unwrap();
+        let ids = bpe.encode_ordinary("Email alice@acme.com or call 555-0142 about account 11829");
+        assert_eq!(
+            ids,
+            vec![
+                6622, 134271, 31, 359, 1047, 1136, 503, 2421, 220, 22275, 12, 28207, 17, 1078,
+                3527, 220, 14642, 2270
+            ]
+        );
+    }
+
+    #[test]
+    fn token_byte_offsets_sum_to_text_length() {
+        let bpe = tiktoken_rs::o200k_base().unwrap();
+        let text = "naïve café 🚀 reach me at test@x.com";
+        let tokens = bpe.encode_ordinary(text);
+        let total: usize = tokens
+            .iter()
+            .map(|&t| bpe.decode_bytes(&[t]).unwrap().len())
+            .sum();
+        assert_eq!(total, text.len());
+    }
 }

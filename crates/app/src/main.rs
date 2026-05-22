@@ -27,7 +27,7 @@ enum Command {
 struct ModelArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value = "model")]
     model: PathBuf,
-    #[arg(long, default_value = "model.onnx")]
+    #[arg(long, default_value = "onnx/model_q4.onnx")]
     model_file: String,
     #[arg(long, default_value_t = 0)]
     threads: usize,
@@ -83,8 +83,7 @@ enum Format {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,ort=warn")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,ort=warn")),
         )
         .init();
 

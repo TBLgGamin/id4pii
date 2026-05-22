@@ -17,19 +17,23 @@ crates/
 
 ## Model
 
-The model is not bundled. Download `openai/privacy-filter` into a directory —
-`scan`/`serve` need `model.onnx` (plus its `.onnx_data` shards), `config.json`
-and `tokenizer.json`:
+The model weights are not bundled. Download `openai/privacy-filter` into a
+directory — `scan`/`serve` need an ONNX file (plus its `.onnx_data` shards) and
+`config.json`:
 
 ```sh
 pip install -U "huggingface_hub[cli]"
-hf download openai/privacy-filter config.json tokenizer.json --local-dir model
-hf download openai/privacy-filter --include "onnx/model.onnx*" --local-dir model
+hf download openai/privacy-filter config.json --local-dir model
+hf download openai/privacy-filter --include "onnx/model_q4.onnx*" --local-dir model
 ```
 
-Point id4pii at it with `--model <dir>` or the `ID4PII_MODEL` env var
-(default `./model`). Use `--model-file onnx/model.onnx` if the ONNX file sits in
-an `onnx/` subfolder.
+This matches the defaults — `--model ./model` (or the `ID4PII_MODEL` env var)
+and `--model-file onnx/model_q4.onnx`. Swap in `onnx/model.onnx` for the
+full-precision variant.
+
+The tokenizer is **not** downloaded: id4pii embeds the `o200k_base` vocab via
+`tiktoken-rs`, which produces token ids identical to privacy-filter's own
+tokenizer (guarded by a regression test in `crates/core/src/detector.rs`).
 
 id4pii feeds the model `input_ids` and `attention_mask`. If a run fails with an
 ONNX error naming a missing required input, that input name needs wiring into
@@ -64,20 +68,20 @@ profile and is many times slower:
 
 ```sh
 cargo build --release
-./target/release/id4pii scan --model-file onnx/model_q4.onnx "..."
+./target/release/id4pii scan "..."
 ```
 
 Measured on a Ryzen 5 9600X with the `model_q4` variant:
 
 | Path | Latency |
 |---|---|
-| CLI one-shot (cold) | ~690 ms |
+| CLI one-shot (cold) | ~195 ms |
 | `serve` request (warm) | ~33 ms |
 
-A CLI invocation reloads the model and the 200k-vocab tokenizer every time —
-the tokenizer parse alone is ~580 ms and cannot be cached. For repeated or
-latency-sensitive use, run `serve` once and call `POST /scan`: the model is
-loaded a single time and each request is just inference. Set
+The tokenizer is embedded and loads in ~85 ms (in parallel with the ONNX
+session), so a cold CLI run is dominated by model load and one inference pass.
+For repeated or latency-sensitive use, `serve` still wins decisively — the
+model loads once and each request is just inference. Set
 `RUST_LOG=id4pii_core=debug` to see per-phase load timings.
 
 ## Development
