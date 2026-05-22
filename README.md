@@ -17,7 +17,7 @@ the real values back into the response — the model never sees real data.
 ```
 crates/
   core/   id4pii-core  — ONNX inference, span decoding, redaction, anonymization
-  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve
+  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve / proxy
 ```
 
 ## Model
@@ -97,6 +97,38 @@ cargo run -p id4pii-app -- serve --addr 127.0.0.1:8080
 - `POST /anonymize` — `{"text": "...", "seed": 1337}` (seed optional) →
   `{"anonymized": "...", "vault": [...]}`
 - `POST /deanonymize` — `{"text": "...", "vault": [...]}` → `{"text": "..."}`
+
+## Proxy — anonymize every LLM call automatically
+
+`id4pii proxy` is a local MITM HTTPS proxy that sits between any app and the LLM
+it calls. Set it as your system proxy and it transparently anonymizes PII in
+outbound requests and restores the real values in responses — Claude Desktop,
+ChatGPT/Codex desktop, browser tabs, CLI tools, anything that honours the system
+proxy. The LLM never sees real data.
+
+```sh
+id4pii proxy cert install      # one-time: generate + trust the local CA
+id4pii proxy run               # listens on 127.0.0.1:8788
+```
+
+Then point your OS HTTP/HTTPS proxy at `127.0.0.1:8788`. Cert subcommands:
+`cert path` (print the CA path), `cert export --out file` (write the CA PEM).
+Firefox keeps its own trust store — import the CA there separately.
+
+It is **schema-agnostic**: rather than per-provider request adapters, it parses
+each JSON body generically and treats every prose string leaf the same — detect
+PII, swap in surrogates — so Anthropic, OpenAI, Google, and the chatgpt.com /
+claude.ai web backends all work with no provider-specific code. Functional
+fields (`model`, `*_id`, `role`, …) are left untouched. Streaming (SSE)
+responses are de-anonymized on the fly, reassembling surrogates split across
+events. Only the hosts in a built-in LLM allowlist are intercepted; everything
+else tunnels untouched. Add hosts in `~/.id4pii/hosts.txt`.
+
+Notes: the proxy decrypts LLM traffic, so it is a trusted local process (it
+never logs request/response bodies above debug level). If a body can't be
+parsed it is passed through unchanged (fail-open) — the app keeps working, with
+a warning logged. An app that pins certificates bypasses the proxy and is
+simply not anonymized.
 
 ## Performance
 

@@ -20,6 +20,11 @@ clap.workspace = true
 axum.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
+hudsucker.workspace = true
+dirs.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+futures.workspace = true
 
 [lints]
 workspace = true

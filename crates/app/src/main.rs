@@ -4,6 +4,7 @@
     clippy::cast_possible_truncation
 )]
 
+mod proxy;
 mod serve;
 
 use std::io::Read;
@@ -32,6 +33,7 @@ enum Command {
     Anonymize(AnonymizeArgs),
     Deanonymize(DeanonymizeArgs),
     Serve(ServeArgs),
+    Proxy(proxy::ProxyArgs),
 }
 
 #[derive(Args)]
@@ -139,6 +141,7 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Command::Proxy(args) => proxy::run(args).await,
     }
 }
 

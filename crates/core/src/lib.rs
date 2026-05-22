@@ -9,11 +9,13 @@
 mod anonymize;
 mod detector;
 mod error;
+mod json_pii;
 mod labels;
 mod redact;
 
-pub use anonymize::{Rng, Vault, VaultEntry, anonymize, deanonymize};
+pub use anonymize::{Rng, Vault, VaultEntry, anonymize, anonymize_into, deanonymize};
 pub use detector::{Detector, PiiSpan};
 pub use error::{Error, Result};
+pub use json_pii::{SseDeanonymizer, anonymize_json, deanonymize_json};
 pub use labels::Category;
 pub use redact::{RedactStyle, redact};

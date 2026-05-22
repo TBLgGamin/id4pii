@@ -4,3 +4,6 @@
 *.pdb
 .env
 .DS_Store
+
+/vault.json
+*.log

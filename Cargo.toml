@@ -21,6 +21,11 @@ ort = "=2.0.0-rc.12"
 tiktoken-rs = "0.11"
 clap = { version = "4", features = ["derive", "env"] }
 axum = "0.8"
+hudsucker = { version = "0.24", features = ["http2"] }
+dirs = "6"
+http-body-util = "0.1"
+bytes = "1"
+futures = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
