@@ -114,21 +114,24 @@ cargo run --release -p id4pii-app -- guard
 It runs in the system tray with two global hotkeys, both rewriting the focused
 field in place:
 
-- **`Ctrl+Shift+A`** — smart toggle. If the focused field has no known
-  surrogates it is anonymized; press it again on the same (or any) field and
-  the surrogates are mapped back to the real values.
-- **`Ctrl+Shift+D`** — always restore: maps any surrogates in the focused field
-  back to their real values, regardless of state.
+- **`Ctrl+Shift+A`** — smart toggle for an **editable field** (your prompt
+  box). If the field has no known surrogates it is anonymized in place; press
+  it again and the surrogates are mapped back to the real values.
+- **`Ctrl+Shift+D`** — restore a **selection**. Select any text — including a
+  read-only LLM reply that can't be edited — and a small popup appears at the
+  cursor showing the real values, with a Copy button.
 
-The toggle decides direction by checking whether the field already contains
-surrogates from the vault.
+`A` writes back in place (for text you're composing); `D` is read-only and
+never touches the source app (for reading replies).
 
 A single in-memory **vault** is the id system that makes this reversible: every
 distinct real value is stored once with its category and a unique surrogate, so
 the same name always maps to the same surrogate and an email maps to its own —
 restoration is unambiguous in both directions. The vault is shared across every
 app for the life of the process, so a value anonymized in one app restores in
-another.
+another. Surrogates are generated procedurally (street addresses, URLs) or from
+large name pools, so the supply is effectively unbounded — fiction-safe phone
+numbers (`555-01xx`) are the one deliberately small set.
 
 Notes: the guard reads and writes via UI Automation, falling back to a
 clipboard select-all + copy/paste for rich editors (browser `contenteditable`,

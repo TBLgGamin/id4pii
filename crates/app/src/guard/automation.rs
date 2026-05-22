@@ -2,7 +2,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use enigo::{Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use uiautomation::UIAutomation;
 use uiautomation::patterns::{UITextPattern, UIValuePattern};
 
@@ -70,6 +70,27 @@ pub(crate) fn write_focused(text: &str) -> Result<()> {
     ctrl_combo(&mut enigo, 'a')?;
     ctrl_combo(&mut enigo, 'v')?;
     Ok(())
+}
+
+pub(crate) fn read_selection() -> Result<String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| anyhow!("input init: {e}"))?;
+    ctrl_combo(&mut enigo, 'c')?;
+    sleep(Duration::from_millis(150));
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| anyhow!("clipboard: {e}"))?;
+    let text = clipboard
+        .get_text()
+        .map_err(|e| anyhow!("clipboard read: {e}"))?;
+    if text.trim().is_empty() {
+        return Err(anyhow!("nothing is selected"));
+    }
+    Ok(text)
+}
+
+pub(crate) fn cursor_position() -> (i32, i32) {
+    Enigo::new(&Settings::default())
+        .ok()
+        .and_then(|enigo| enigo.location().ok())
+        .unwrap_or((240, 240))
 }
 
 fn ctrl_combo(enigo: &mut Enigo, letter: char) -> Result<()> {

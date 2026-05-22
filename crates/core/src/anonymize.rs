@@ -117,6 +117,36 @@ const FIRST_NAMES: &[&str] = &[
     "Bjarne",
     "Margaret",
     "Radia",
+    "Donald",
+    "Barbara",
+    "Edsger",
+    "Niklaus",
+    "Tony",
+    "Bruce",
+    "Clark",
+    "Diana",
+    "Peter",
+    "Wanda",
+    "Arthur",
+    "Merlin",
+    "Geralt",
+    "Yennefer",
+    "Ciri",
+    "Ezio",
+    "Lara",
+    "Gordon",
+    "Chell",
+    "Samus",
+    "Cloud",
+    "Tifa",
+    "Aerith",
+    "Zelda",
+    "Mario",
+    "Luigi",
+    "Daenerys",
+    "Tyrion",
+    "Jon",
+    "Eowyn",
 ];
 
 const LAST_NAMES: &[&str] = &[
@@ -145,36 +175,116 @@ const LAST_NAMES: &[&str] = &[
     "Deckard",
     "Perlman",
     "Liskov",
+    "Knuth",
+    "Wirth",
+    "Ritchie",
+    "Thompson",
+    "Kernighan",
+    "Dijkstra",
+    "Wozniak",
+    "Banner",
+    "Parker",
+    "Romanoff",
+    "Targaryen",
+    "Lannister",
+    "Snow",
+    "Pendragon",
+    "Greyjoy",
+    "Wayne",
+    "Kent",
+    "Prince",
+    "Croft",
+    "Freeman",
+    "Aran",
+    "Strife",
+    "Lockhart",
+    "Gainsborough",
+    "Valentine",
+    "Cousland",
+    "Hawke",
+    "Shepard",
+    "Vance",
+    "Sterling",
+    "Holmes",
+    "Watson",
+    "Moriarty",
 ];
 
-const ADDRESSES: &[&str] = &[
-    "221B Baker Street",
-    "742 Evergreen Terrace",
-    "4 Privet Drive",
-    "12 Grimmauld Place",
-    "1313 Mockingbird Lane",
-    "Bag End, Bagshot Row",
-    "1640 Riverside Drive",
-    "Sector 7-G, Springfield",
-    "31 Spooner Street",
-    "Wayne Manor, Gotham",
-    "Nakatomi Plaza, Los Angeles",
-    "1 Infinite Loop",
+const STREET_NAMES: &[&str] = &[
+    "Baker",
+    "Evergreen",
+    "Mockingbird",
+    "Riverside",
+    "Sunset",
+    "Maple",
+    "Oak",
+    "Cedar",
+    "Willow",
+    "Birch",
+    "Lakeshore",
+    "Hawthorn",
+    "Bagshot",
+    "Privet",
+    "Spooner",
+    "Elm",
+    "Cherry",
+    "Aspen",
+    "Linden",
+    "Juniper",
+    "Sycamore",
+    "Magnolia",
+    "Chestnut",
+    "Holly",
+    "Marigold",
+    "Brookline",
+    "Foxglove",
+    "Ironwood",
+    "Wisteria",
+    "Greenfield",
+    "Hillcrest",
+    "Meadowbrook",
+];
+
+const STREET_TYPES: &[&str] = &[
+    "Street",
+    "Avenue",
+    "Road",
+    "Lane",
+    "Drive",
+    "Court",
+    "Way",
+    "Boulevard",
+    "Terrace",
+    "Place",
 ];
 
 const DOMAINS: &[&str] = &["example.com", "example.org", "example.net"];
 
-const URL_PATHS: &[&str] = &[
+const URL_WORDS: &[&str] = &[
     "holodeck",
     "mainframe",
     "rivendell",
-    "the-matrix",
+    "matrix",
     "tardis",
     "hyrule",
     "moria",
     "tatooine",
     "gibson",
     "zion",
+    "archive",
+    "vault",
+    "portal",
+    "console",
+    "gateway",
+    "sandbox",
+    "nexus",
+    "atlas",
+    "beacon",
+    "harbor",
+    "orbit",
+    "relay",
+    "summit",
+    "haven",
 ];
 
 #[must_use]
@@ -271,7 +381,14 @@ fn generate_fake(category: Category, rng: &mut Rng) -> String {
             number.push(rng.digit());
             number
         }
-        Category::PrivateAddress => rng.pick(ADDRESSES).to_string(),
+        Category::PrivateAddress => {
+            let number = 1 + rng.below(9899);
+            format!(
+                "{number} {} {}",
+                rng.pick(STREET_NAMES),
+                rng.pick(STREET_TYPES)
+            )
+        }
         Category::PrivateDate => {
             let year = 1970 + rng.below(50);
             let month = 1 + rng.below(12);
@@ -279,7 +396,13 @@ fn generate_fake(category: Category, rng: &mut Rng) -> String {
             format!("{year:04}-{month:02}-{day:02}")
         }
         Category::PrivateUrl => {
-            format!("https://{}/{}", rng.pick(DOMAINS), rng.pick(URL_PATHS))
+            format!(
+                "https://{}/{}-{}{}",
+                rng.pick(DOMAINS),
+                rng.pick(URL_WORDS),
+                rng.digit(),
+                rng.digit()
+            )
         }
         Category::AccountNumber => {
             let mut digits = String::with_capacity(10);
