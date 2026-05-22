@@ -126,8 +126,10 @@ Claude reply.
 Notes: the guard reads and writes via UI Automation, falling back to a
 clipboard + Ctrl+V paste for rich editors (browser `contenteditable`) that do
 not accept direct value writes. The response side is read-only — replies are
-shown in a popup rather than rewritten in place. Windows only; macOS (AX API)
-and Linux (AT-SPI) are future work.
+shown in a popup rather than rewritten in place. The `guard` subcommand is
+Windows only (macOS AX API and Linux AT-SPI are future work); the module is
+`cfg(windows)`-gated, so the workspace still builds on other platforms — only
+the subcommand is absent there.
 
 ## Performance
 
