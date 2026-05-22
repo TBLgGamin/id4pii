@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use id4pii_core::{Detector, PiiSpan, RedactStyle, redact};
+use id4pii_core::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -28,6 +28,30 @@ struct ScanResponse {
     spans: Vec<PiiSpan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     redacted: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnonymizeRequest {
+    text: String,
+    #[serde(default)]
+    seed: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct AnonymizeResponse {
+    anonymized: String,
+    vault: Vault,
+}
+
+#[derive(Deserialize)]
+struct DeanonymizeRequest {
+    text: String,
+    vault: Vault,
+}
+
+#[derive(Serialize)]
+struct DeanonymizeResponse {
+    text: String,
 }
 
 struct ApiError(String);
@@ -52,6 +76,8 @@ pub(crate) async fn run(
     let app = Router::new()
         .route("/health", get(health))
         .route("/scan", post(scan))
+        .route("/anonymize", post(anonymize_route))
+        .route("/deanonymize", post(deanonymize_route))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -87,4 +113,32 @@ async fn scan(
         .map_err(ApiError)?;
 
     Ok(Json(response))
+}
+
+async fn anonymize_route(
+    State(state): State<AppState>,
+    Json(request): Json<AnonymizeRequest>,
+) -> std::result::Result<Json<AnonymizeResponse>, ApiError> {
+    let response =
+        tokio::task::spawn_blocking(move || -> std::result::Result<AnonymizeResponse, String> {
+            let mut detector = state
+                .detector
+                .lock()
+                .map_err(|_| "detector lock poisoned".to_string())?;
+            let spans = detector.detect(&request.text).map_err(|e| e.to_string())?;
+            let mut rng = request.seed.map_or_else(Rng::from_entropy, Rng::new);
+            let (anonymized, vault) = anonymize(&request.text, &spans, &mut rng);
+            Ok(AnonymizeResponse { anonymized, vault })
+        })
+        .await
+        .map_err(|e| ApiError(e.to_string()))?
+        .map_err(ApiError)?;
+
+    Ok(Json(response))
+}
+
+async fn deanonymize_route(Json(request): Json<DeanonymizeRequest>) -> Json<DeanonymizeResponse> {
+    Json(DeanonymizeResponse {
+        text: deanonymize(&request.text, &request.vault),
+    })
 }

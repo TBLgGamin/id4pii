@@ -1,4 +1,8 @@
-#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::cast_possible_truncation
+)]
 
 mod serve;
 
@@ -7,11 +11,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use id4pii_core::{Detector, PiiSpan, RedactStyle, redact};
+use id4pii_core::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
+use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "id4pii", version, about = "Detect and redact PII in text")]
+#[command(
+    name = "id4pii",
+    version,
+    about = "Detect, redact and reversibly anonymize PII in text"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -20,6 +29,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Scan(ScanArgs),
+    Anonymize(AnonymizeArgs),
+    Deanonymize(DeanonymizeArgs),
     Serve(ServeArgs),
 }
 
@@ -46,6 +57,28 @@ struct ScanArgs {
     format: Format,
     #[command(flatten)]
     model: ModelArgs,
+}
+
+#[derive(Args)]
+struct AnonymizeArgs {
+    text: Option<String>,
+    #[arg(short, long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    seed: Option<u64>,
+    #[arg(long)]
+    vault_out: Option<PathBuf>,
+    #[command(flatten)]
+    model: ModelArgs,
+}
+
+#[derive(Args)]
+struct DeanonymizeArgs {
+    text: Option<String>,
+    #[arg(short, long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    vault: PathBuf,
 }
 
 #[derive(Args)]
@@ -79,6 +112,12 @@ enum Format {
     Text,
 }
 
+#[derive(Serialize)]
+struct AnonymizeOutput {
+    anonymized: String,
+    vault: Vault,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -89,6 +128,8 @@ async fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Scan(args) => run_scan(&args),
+        Command::Anonymize(args) => run_anonymize(&args),
+        Command::Deanonymize(args) => run_deanonymize(&args),
         Command::Serve(args) => {
             serve::run(
                 args.addr,
@@ -102,7 +143,7 @@ async fn main() -> Result<()> {
 }
 
 fn run_scan(args: &ScanArgs) -> Result<()> {
-    let text = read_input(args)?;
+    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
     let mut detector = Detector::load(
         &args.model.model,
         &args.model.model_file,
@@ -123,11 +164,44 @@ fn run_scan(args: &ScanArgs) -> Result<()> {
     Ok(())
 }
 
-fn read_input(args: &ScanArgs) -> Result<String> {
-    if let Some(text) = &args.text {
+fn run_anonymize(args: &AnonymizeArgs) -> Result<()> {
+    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
+    let mut detector = Detector::load(
+        &args.model.model,
+        &args.model.model_file,
+        args.model.threads,
+    )
+    .context("failed to load model")?;
+    let spans = detector.detect(&text).context("detection failed")?;
+
+    let mut rng = args.seed.map_or_else(Rng::from_entropy, Rng::new);
+    let (anonymized, vault) = anonymize(&text, &spans, &mut rng);
+
+    if let Some(path) = &args.vault_out {
+        std::fs::write(path, serde_json::to_string_pretty(&vault)?)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        println!("{anonymized}");
+    } else {
+        let output = AnonymizeOutput { anonymized, vault };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+    Ok(())
+}
+
+fn run_deanonymize(args: &DeanonymizeArgs) -> Result<()> {
+    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
+    let vault_text = std::fs::read_to_string(&args.vault)
+        .with_context(|| format!("failed to read {}", args.vault.display()))?;
+    let vault: Vault = serde_json::from_str(&vault_text).context("invalid vault file")?;
+    println!("{}", deanonymize(&text, &vault));
+    Ok(())
+}
+
+fn read_input(text: Option<&String>, file: Option<&PathBuf>) -> Result<String> {
+    if let Some(text) = text {
         return Ok(text.clone());
     }
-    if let Some(path) = &args.file {
+    if let Some(path) = file {
         return std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()));
     }

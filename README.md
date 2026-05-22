@@ -1,18 +1,23 @@
 # id4pii
 
-Fast PII detection and redaction for text — CLI and HTTP API — powered by
+A local PII layer for text — detect, redact, and **reversibly anonymize** —
+as a CLI and HTTP API, powered by
 [OpenAI Privacy Filter](https://huggingface.co/openai/privacy-filter) running
 locally through ONNX Runtime. No data leaves the machine.
 
 It tags eight categories: `account_number`, `private_address`, `private_date`,
 `private_email`, `private_person`, `private_phone`, `private_url`, `secret`.
 
+Its main use: sit **between your app and an LLM**. Swap real PII for realistic
+fake surrogates before the call, send the harmless text to the model, then swap
+the real values back into the response — the model never sees real data.
+
 ## Layout
 
 ```
 crates/
-  core/   id4pii-core  — ONNX inference, BIOES span decoding, redaction
-  app/    id4pii-app   — `id4pii` binary: `scan` (CLI) and `serve` (HTTP API)
+  core/   id4pii-core  — ONNX inference, span decoding, redaction, anonymization
+  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve
 ```
 
 ## Model
@@ -51,6 +56,35 @@ echo "ssn 123-45-6789" | cargo run -p id4pii-app -- scan --format text
 JSON spans by default (`--format text` for a table, `--redact` for masked text;
 `--style label|block|char`).
 
+## Anonymize / deanonymize (the LLM shield)
+
+`anonymize` replaces each detected PII span with a realistic fake surrogate of
+the same category and emits a **vault** — the fake → real mapping. The same
+real value always maps to the same surrogate, so the text stays coherent.
+`deanonymize` uses the vault to restore the real values in whatever comes back.
+
+```sh
+# 1. anonymize, keeping the vault in a file; only the safe text is printed
+id4pii anonymize --vault-out vault.json "I'm Sarah Connor, sarah@skynet.com" > safe.txt
+
+# 2. send safe.txt to your LLM ... get a reply that mentions the fakes
+
+# 3. restore the real values from the reply
+id4pii deanonymize --vault vault.json "$(cat llm_reply.txt)"
+```
+
+Without `--vault-out`, `anonymize` prints one JSON object
+`{"anonymized": "...", "vault": [...]}`. Surrogates are random per run; pass
+`--seed <n>` for reproducible output. `deanonymize` needs no model.
+
+Surrogates lean fiction-safe and nerdy — full `First Last` names from a
+sci-fi/hacker pool, phone numbers in the `555-01xx` range reserved for fiction,
+`example.com` URLs. Restoration is string-matching, with two consequences worth
+knowing: if the LLM rewrites a surrogate (truncates a name, splits an email)
+that fragment won't be restored; and if a surrogate happens to appear in
+unrelated parts of the reply, it will be swapped too. Multi-word surrogates make
+both rare, which is why person names are always two words.
+
 ## HTTP API
 
 ```sh
@@ -58,8 +92,11 @@ cargo run -p id4pii-app -- serve --addr 127.0.0.1:8080
 ```
 
 - `GET /health` → `ok`
-- `POST /scan` with `{"text": "...", "redact": true}` →
+- `POST /scan` — `{"text": "...", "redact": true}` →
   `{"spans": [...], "redacted": "..."}`
+- `POST /anonymize` — `{"text": "...", "seed": 1337}` (seed optional) →
+  `{"anonymized": "...", "vault": [...]}`
+- `POST /deanonymize` — `{"text": "...", "vault": [...]}` → `{"text": "..."}`
 
 ## Performance
 
