@@ -7,7 +7,7 @@ use hudsucker::hyper::{Method, Request, Response, header};
 use hudsucker::{Body, HttpContext, HttpHandler, RequestOrResponse, decode_response};
 use id4pii_core::{Detector, Rng, SseDeanonymizer, Vault, anonymize_json, deanonymize_json};
 use serde_json::Value;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 use super::hosts::HostMatcher;
 
@@ -34,10 +34,10 @@ impl PiiHandler {
         }
     }
 
-    async fn anonymize_bytes(&self, bytes: Bytes) -> Bytes {
+    async fn anonymize_bytes(&self, bytes: Bytes) -> (Bytes, usize) {
         let mut value: Value = match serde_json::from_slice(&bytes) {
             Ok(value) => value,
-            Err(_) => return bytes,
+            Err(_) => return (bytes, 0),
         };
         let detector = self.detector.clone();
         let vault = self.vault.clone();
@@ -52,16 +52,16 @@ impl PiiHandler {
             let mut rng = rng
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            anonymize_json(&mut value, &mut detector, &mut rng, &mut vault);
-            value
+            let count = anonymize_json(&mut value, &mut detector, &mut rng, &mut vault);
+            (value, count)
         })
         .await;
         match task {
-            Ok(value) => match serde_json::to_vec(&value) {
-                Ok(encoded) => Bytes::from(encoded),
-                Err(_) => bytes,
+            Ok((value, count)) => match serde_json::to_vec(&value) {
+                Ok(encoded) => (Bytes::from(encoded), count),
+                Err(_) => (bytes, 0),
             },
-            Err(_) => bytes,
+            Err(_) => (bytes, 0),
         }
     }
 
@@ -88,7 +88,7 @@ impl HttpHandler for PiiHandler {
         if req.method() != Method::POST || !is_json(req.headers()) {
             return req.into();
         }
-        debug!("anonymizing request to {}", req.uri());
+        let uri = req.uri().to_string();
         let (mut parts, body) = req.into_parts();
         let collected = match body.collect().await {
             Ok(collected) => collected.to_bytes(),
@@ -97,7 +97,8 @@ impl HttpHandler for PiiHandler {
                 return Request::from_parts(parts, Body::empty()).into();
             }
         };
-        let anonymized = self.anonymize_bytes(collected).await;
+        let (anonymized, count) = self.anonymize_bytes(collected).await;
+        info!("request to {uri}: anonymized {count} field(s) containing PII");
         set_content_length(&mut parts.headers, anonymized.len());
         Request::from_parts(parts, Body::from(anonymized)).into()
     }
@@ -118,6 +119,7 @@ impl HttpHandler for PiiHandler {
             .to_string();
 
         if content_type.contains("event-stream") {
+            info!("de-anonymizing streaming response");
             let deanon = SseDeanonymizer::new(&self.vault_snapshot());
             let (mut parts, body) = res.into_parts();
             parts.headers.remove(header::CONTENT_LENGTH);
@@ -147,7 +149,10 @@ impl HttpHandler for PiiHandler {
                     return Response::new(Body::empty());
                 }
             };
-            let restored = self.deanonymize_bytes(&collected);
+            let (restored, count) = self.deanonymize_bytes(&collected);
+            if count > 0 {
+                info!("response: restored {count} field(s) to real values");
+            }
             set_content_length(&mut parts.headers, restored.len());
             return Response::from_parts(parts, Body::from(restored));
         }
@@ -157,15 +162,15 @@ impl HttpHandler for PiiHandler {
 }
 
 impl PiiHandler {
-    fn deanonymize_bytes(&self, bytes: &Bytes) -> Bytes {
+    fn deanonymize_bytes(&self, bytes: &Bytes) -> (Bytes, usize) {
         let mut value: Value = match serde_json::from_slice(bytes) {
             Ok(value) => value,
-            Err(_) => return bytes.clone(),
+            Err(_) => return (bytes.clone(), 0),
         };
-        deanonymize_json(&mut value, &self.vault_snapshot());
+        let count = deanonymize_json(&mut value, &self.vault_snapshot());
         match serde_json::to_vec(&value) {
-            Ok(encoded) => Bytes::from(encoded),
-            Err(_) => bytes.clone(),
+            Ok(encoded) => (Bytes::from(encoded), count),
+            Err(_) => (bytes.clone(), 0),
         }
     }
 }

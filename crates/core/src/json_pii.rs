@@ -67,26 +67,29 @@ fn is_prose(value: &str) -> bool {
     true
 }
 
-fn transform_strings(value: &mut Value, transform: &mut impl FnMut(&str) -> Option<String>) {
+fn transform_strings(
+    value: &mut Value,
+    transform: &mut impl FnMut(&str) -> Option<String>,
+) -> usize {
     match value {
         Value::String(text) if is_prose(text) => {
             if let Some(replaced) = transform(text) {
                 *text = replaced;
+                1
+            } else {
+                0
             }
         }
-        Value::Array(items) => {
-            for item in items {
-                transform_strings(item, transform);
-            }
-        }
-        Value::Object(map) => {
-            for (key, child) in map.iter_mut() {
-                if !is_functional_key(key) {
-                    transform_strings(child, transform);
-                }
-            }
-        }
-        _ => {}
+        Value::Array(items) => items
+            .iter_mut()
+            .map(|item| transform_strings(item, transform))
+            .sum(),
+        Value::Object(map) => map
+            .iter_mut()
+            .filter(|(key, _)| !is_functional_key(key))
+            .map(|(_, child)| transform_strings(child, transform))
+            .sum(),
+        _ => 0,
     }
 }
 
@@ -95,14 +98,14 @@ pub fn anonymize_json(
     detector: &mut Detector,
     rng: &mut Rng,
     vault: &mut Vault,
-) {
+) -> usize {
     transform_strings(value, &mut |text| match detector.detect(text) {
         Ok(spans) if !spans.is_empty() => Some(anonymize_into(text, &spans, rng, vault)),
         _ => None,
-    });
+    })
 }
 
-pub fn deanonymize_json(value: &mut Value, vault: &Vault) {
+pub fn deanonymize_json(value: &mut Value, vault: &Vault) -> usize {
     transform_strings(value, &mut |text| {
         let restored = deanonymize(text, vault);
         if restored == text {
@@ -110,7 +113,7 @@ pub fn deanonymize_json(value: &mut Value, vault: &Vault) {
         } else {
             Some(restored)
         }
-    });
+    })
 }
 
 fn sorted_pairs(vault: &Vault) -> Vec<(String, String)> {
