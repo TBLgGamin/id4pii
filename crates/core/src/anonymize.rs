@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use serde::{Deserialize, Serialize};
 
 use crate::detector::PiiSpan;
@@ -16,6 +14,25 @@ pub struct VaultEntry {
 #[serde(transparent)]
 pub struct Vault {
     pub entries: Vec<VaultEntry>,
+}
+
+impl Vault {
+    pub fn surrogate_for(&mut self, category: Category, real: &str, rng: &mut Rng) -> String {
+        if let Some(entry) = self
+            .entries
+            .iter()
+            .find(|entry| entry.category == category && entry.real == real)
+        {
+            return entry.fake.clone();
+        }
+        let fake = unique_fake(category, rng, self);
+        self.entries.push(VaultEntry {
+            category,
+            real: real.to_string(),
+            fake: fake.clone(),
+        });
+        fake
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -162,15 +179,18 @@ const URL_PATHS: &[&str] = &[
 
 #[must_use]
 pub fn anonymize(text: &str, spans: &[PiiSpan], rng: &mut Rng) -> (String, Vault) {
+    let mut vault = Vault::default();
+    let result = anonymize_into(text, spans, rng, &mut vault);
+    (result, vault)
+}
+
+#[must_use]
+pub fn anonymize_into(text: &str, spans: &[PiiSpan], rng: &mut Rng, vault: &mut Vault) -> String {
     let mut ordered: Vec<&PiiSpan> = spans.iter().collect();
     ordered.sort_by_key(|span| span.start);
 
-    let mut assigned: HashMap<(Category, String), String> = HashMap::new();
-    let mut used: HashSet<String> = HashSet::new();
-    let mut vault = Vault::default();
     let mut result = String::with_capacity(text.len());
     let mut cursor = 0;
-
     for span in ordered {
         if span.start < cursor || span.end > text.len() || span.start > span.end {
             continue;
@@ -178,27 +198,14 @@ pub fn anonymize(text: &str, spans: &[PiiSpan], rng: &mut Rng) -> (String, Vault
         if let Some(prefix) = text.get(cursor..span.start) {
             result.push_str(prefix);
         }
-        let key = (span.category, span.text.clone());
-        let fake = if let Some(existing) = assigned.get(&key) {
-            existing.clone()
-        } else {
-            let generated = unique_fake(span.category, rng, &used);
-            used.insert(generated.clone());
-            assigned.insert(key, generated.clone());
-            vault.entries.push(VaultEntry {
-                category: span.category,
-                real: span.text.clone(),
-                fake: generated.clone(),
-            });
-            generated
-        };
+        let fake = vault.surrogate_for(span.category, &span.text, rng);
         result.push_str(&fake);
         cursor = span.end;
     }
     if let Some(rest) = text.get(cursor..) {
         result.push_str(rest);
     }
-    (result, vault)
+    result
 }
 
 #[must_use]
@@ -234,10 +241,10 @@ pub fn deanonymize(text: &str, vault: &Vault) -> String {
     result
 }
 
-fn unique_fake(category: Category, rng: &mut Rng, used: &HashSet<String>) -> String {
+fn unique_fake(category: Category, rng: &mut Rng, vault: &Vault) -> String {
     for _ in 0..64 {
         let candidate = generate_fake(category, rng);
-        if !used.contains(&candidate) {
+        if !vault.entries.iter().any(|entry| entry.fake == candidate) {
             return candidate;
         }
     }

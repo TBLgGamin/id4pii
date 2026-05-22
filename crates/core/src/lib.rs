@@ -12,7 +12,7 @@ mod error;
 mod labels;
 mod redact;
 
-pub use anonymize::{Rng, Vault, VaultEntry, anonymize, deanonymize};
+pub use anonymize::{Rng, Vault, VaultEntry, anonymize, anonymize_into, deanonymize};
 pub use detector::{Detector, PiiSpan};
 pub use error::{Error, Result};
 pub use labels::Category;

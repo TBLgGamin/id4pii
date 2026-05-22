@@ -17,7 +17,7 @@ the real values back into the response — the model never sees real data.
 ```
 crates/
   core/   id4pii-core  — ONNX inference, span decoding, redaction, anonymization
-  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve
+  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve / guard
 ```
 
 ## Model
@@ -97,6 +97,37 @@ cargo run -p id4pii-app -- serve --addr 127.0.0.1:8080
 - `POST /anonymize` — `{"text": "...", "seed": 1337}` (seed optional) →
   `{"anonymized": "...", "vault": [...]}`
 - `POST /deanonymize` — `{"text": "...", "vault": [...]}` → `{"text": "..."}`
+
+## Guard — system-wide hotkey (Windows)
+
+`id4pii guard` is a tray app that anonymizes PII in *any* application's text
+field — Claude Desktop, ChatGPT/Codex desktop, chatgpt.com/claude.ai in any
+browser, anything. It works through the Windows UI Automation accessibility
+layer (the same layer Grammarly uses), which sits *above* the network: the app
+itself sends the already-anonymized text, so there is no proxy, no certificate,
+and nothing for TLS pinning or anti-bot checks to detect.
+
+```sh
+cargo run --release -p id4pii-app -- guard
+```
+
+It runs in the system tray with two global hotkeys:
+
+- **`Ctrl+Shift+A`** — anonymize the text field you are focused in, in place.
+  Type your message, press the hotkey, review, then send normally.
+- **`Ctrl+Shift+D`** — de-anonymize the current selection. Select an LLM reply
+  that contains surrogates, press the hotkey, and the real values are shown in
+  a popup.
+
+A single in-memory vault keeps surrogates consistent across every app for the
+life of the process — a name anonymized into ChatGPT de-anonymizes from a
+Claude reply.
+
+Notes: the guard reads and writes via UI Automation, falling back to a
+clipboard + Ctrl+V paste for rich editors (browser `contenteditable`) that do
+not accept direct value writes. The response side is read-only — replies are
+shown in a popup rather than rewritten in place. Windows only; macOS (AX API)
+and Linux (AT-SPI) are future work.
 
 ## Performance
 

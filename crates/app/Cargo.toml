@@ -21,5 +21,14 @@ axum.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+uiautomation.workspace = true
+tao.workspace = true
+tray-icon.workspace = true
+global-hotkey.workspace = true
+arboard.workspace = true
+enigo.workspace = true
+rfd.workspace = true
+
 [lints]
 workspace = true

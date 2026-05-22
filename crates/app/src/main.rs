@@ -4,6 +4,8 @@
     clippy::cast_possible_truncation
 )]
 
+#[cfg(windows)]
+mod guard;
 mod serve;
 
 use std::io::Read;
@@ -32,6 +34,8 @@ enum Command {
     Anonymize(AnonymizeArgs),
     Deanonymize(DeanonymizeArgs),
     Serve(ServeArgs),
+    #[cfg(windows)]
+    Guard(guard::GuardArgs),
 }
 
 #[derive(Args)]
@@ -139,6 +143,8 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        #[cfg(windows)]
+        Command::Guard(args) => guard::run(&args),
     }
 }
 
