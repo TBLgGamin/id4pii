@@ -413,4 +413,24 @@ mod tests {
         assert_eq!(restored, "Hi Sarah Connor there");
         assert!(text.contains("[DONE]"));
     }
+
+    #[test]
+    fn streaming_restores_surrogate_before_finish() {
+        let vault = vault_with("Paul Organa", "Sarah Connor");
+        let mut deanon = SseDeanonymizer::new(&vault);
+        let mut output = Vec::new();
+        output.extend(deanon.push(b"data: {\"delta\":{\"content\":\"Hi Paul\"}}\n\n"));
+        output.extend(deanon.push(b"data: {\"delta\":{\"content\":\" Organa, \"}}\n\n"));
+        output.extend(deanon.push(
+            b"data: {\"delta\":{\"content\":\"here is a long trailing passage of filler beyond the carry window\"}}\n\n",
+        ));
+        output.extend(deanon.push(b"data: {\"delta\":{\"content\":\" end\"}}\n\n"));
+
+        let before_finish = String::from_utf8(output).unwrap();
+        assert!(
+            before_finish.contains("Sarah Connor"),
+            "surrogate must be restored mid-stream, before finish(): {before_finish}"
+        );
+        assert!(!before_finish.contains("Paul Organa"));
+    }
 }

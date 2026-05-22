@@ -128,7 +128,11 @@ Notes: the proxy decrypts LLM traffic, so it is a trusted local process (it
 never logs request/response bodies above debug level). If a body can't be
 parsed it is passed through unchanged (fail-open) — the app keeps working, with
 a warning logged. An app that pins certificates bypasses the proxy and is
-simply not anonymized.
+simply not anonymized. Streaming holds a small trailing buffer (~48 chars) to
+catch surrogates split across events, so very short replies arrive in one piece
+at the end rather than token-by-token. The de-anonymization vault is kept in
+memory for the proxy's lifetime and grows with the number of distinct PII
+values seen.
 
 ## Performance
 
