@@ -1,0 +1,25 @@
+[package]
+name = "id4pii-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "id4pii"
+path = "src/main.rs"
+
+[dependencies]
+id4pii-core.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+axum.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+
+[lints]
+workspace = true
