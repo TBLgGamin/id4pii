@@ -28,7 +28,6 @@ tray-icon.workspace = true
 global-hotkey.workspace = true
 arboard.workspace = true
 enigo.workspace = true
-wry.workspace = true
 
 [lints]
 workspace = true

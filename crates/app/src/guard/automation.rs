@@ -72,16 +72,6 @@ pub(crate) fn write_focused(text: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn read_selection() -> Result<String> {
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| anyhow!("input init: {e}"))?;
-    ctrl_combo(&mut enigo, 'c')?;
-    sleep(Duration::from_millis(140));
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| anyhow!("clipboard: {e}"))?;
-    clipboard
-        .get_text()
-        .map_err(|e| anyhow!("clipboard read: {e}"))
-}
-
 fn ctrl_combo(enigo: &mut Enigo, letter: char) -> Result<()> {
     enigo
         .key(Key::Control, Direction::Press)

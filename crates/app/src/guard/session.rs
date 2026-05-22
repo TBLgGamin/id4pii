@@ -30,4 +30,11 @@ impl Session {
     pub(crate) fn deanonymize(&self, text: &str) -> String {
         deanonymize(text, &self.vault)
     }
+
+    pub(crate) fn contains_surrogates(&self, text: &str) -> bool {
+        self.vault
+            .entries
+            .iter()
+            .any(|entry| !entry.fake.is_empty() && text.contains(entry.fake.as_str()))
+    }
 }

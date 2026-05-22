@@ -111,25 +111,31 @@ and nothing for TLS pinning or anti-bot checks to detect.
 cargo run --release -p id4pii-app -- guard
 ```
 
-It runs in the system tray with two global hotkeys:
+It runs in the system tray with two global hotkeys, both rewriting the focused
+field in place:
 
-- **`Ctrl+Shift+A`** — anonymize the text field you are focused in, in place.
-  Type your message, press the hotkey, review, then send normally.
-- **`Ctrl+Shift+D`** — de-anonymize the current selection. Select an LLM reply
-  that contains surrogates, press the hotkey, and the real values are shown in
-  a popup.
+- **`Ctrl+Shift+A`** — smart toggle. If the focused field has no known
+  surrogates it is anonymized; press it again on the same (or any) field and
+  the surrogates are mapped back to the real values.
+- **`Ctrl+Shift+D`** — always restore: maps any surrogates in the focused field
+  back to their real values, regardless of state.
 
-A single in-memory vault keeps surrogates consistent across every app for the
-life of the process — a name anonymized into ChatGPT de-anonymizes from a
-Claude reply.
+The toggle decides direction by checking whether the field already contains
+surrogates from the vault.
+
+A single in-memory **vault** is the id system that makes this reversible: every
+distinct real value is stored once with its category and a unique surrogate, so
+the same name always maps to the same surrogate and an email maps to its own —
+restoration is unambiguous in both directions. The vault is shared across every
+app for the life of the process, so a value anonymized in one app restores in
+another.
 
 Notes: the guard reads and writes via UI Automation, falling back to a
-clipboard + Ctrl+V paste for rich editors (browser `contenteditable`) that do
-not accept direct value writes. The response side is read-only — replies are
-shown in a popup rather than rewritten in place. The `guard` subcommand is
-Windows only (macOS AX API and Linux AT-SPI are future work); the module is
-`cfg(windows)`-gated, so the workspace still builds on other platforms — only
-the subcommand is absent there.
+clipboard select-all + copy/paste for rich editors (browser `contenteditable`,
+some Electron apps) that do not expose direct value access. The `guard`
+subcommand is Windows only (macOS AX API and Linux AT-SPI are future work); the
+module is `cfg(windows)`-gated, so the workspace still builds on other
+platforms — only the subcommand is absent there.
 
 ## Performance
 
