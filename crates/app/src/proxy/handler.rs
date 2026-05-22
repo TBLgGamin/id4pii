@@ -57,10 +57,15 @@ impl PiiHandler {
         })
         .await;
         match task {
-            Ok((value, count)) => match serde_json::to_vec(&value) {
-                Ok(encoded) => (Bytes::from(encoded), count),
-                Err(_) => (bytes, 0),
-            },
+            Ok((value, count)) => {
+                if count == 0 {
+                    return (bytes, 0);
+                }
+                match serde_json::to_vec(&value) {
+                    Ok(encoded) => (Bytes::from(encoded), count),
+                    Err(_) => (bytes, 0),
+                }
+            }
             Err(_) => (bytes, 0),
         }
     }
@@ -168,6 +173,9 @@ impl PiiHandler {
             Err(_) => return (bytes.clone(), 0),
         };
         let count = deanonymize_json(&mut value, &self.vault_snapshot());
+        if count == 0 {
+            return (bytes.clone(), 0);
+        }
         match serde_json::to_vec(&value) {
             Ok(encoded) => (Bytes::from(encoded), count),
             Err(_) => (bytes.clone(), 0),

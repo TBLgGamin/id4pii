@@ -43,6 +43,9 @@ impl HostMatcher {
 
     pub(crate) fn matches(&self, host: &str) -> bool {
         let host = host.to_ascii_lowercase();
+        if host.starts_with("ws.") || host.starts_with("wss.") || host.contains("websocket") {
+            return false;
+        }
         let host = host.strip_prefix("www.").unwrap_or(&host);
         self.hosts
             .iter()
