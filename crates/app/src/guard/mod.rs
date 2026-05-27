@@ -26,9 +26,9 @@ use self::store::DpapiStore;
 
 #[derive(Args)]
 pub(crate) struct GuardArgs {
-    #[arg(long, env = "ID4PII_MODEL", default_value = "model")]
+    #[arg(long, env = "ID4PII_MODEL", default_value_os_t = id4pii_core::model_dir::default_dir())]
     model: PathBuf,
-    #[arg(long, default_value = "onnx/model_q4.onnx")]
+    #[arg(long, default_value = id4pii_core::model_dir::DEFAULT_MODEL_FILE)]
     model_file: String,
     #[arg(long, default_value_t = 0)]
     threads: usize,
@@ -36,6 +36,8 @@ pub(crate) struct GuardArgs {
     bridge_port: u16,
     #[arg(long)]
     no_bridge: bool,
+    #[arg(long)]
+    dev_extensions: bool,
 }
 
 pub(crate) fn run(args: &GuardArgs) -> Result<()> {
@@ -49,8 +51,14 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     let mut bus = EventBus::new();
     let feedback_rx = bus.subscribe();
     let stats_rx = bus.subscribe();
-    let bridge_rx = if args.no_bridge { None } else { Some(bus.subscribe()) };
+    let bridge_rx = if args.no_bridge {
+        None
+    } else {
+        Some(bus.subscribe())
+    };
     let bus = Arc::new(bus);
+
+    crate::model_setup::ensure_model(&args.model, &args.model_file)?;
 
     let store_path = DpapiStore::default_path()?;
     let store: Arc<dyn store::VaultStore> = Arc::new(DpapiStore::new(store_path));
@@ -78,7 +86,13 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
 
     if let Some(rx) = bridge_rx {
         let vault_handle = engine_vault_handle.clone();
-        if let Err(err) = bridge::spawn(args.bridge_port, command_tx.clone(), rx, vault_handle) {
+        if let Err(err) = bridge::spawn(
+            args.bridge_port,
+            args.dev_extensions,
+            command_tx.clone(),
+            rx,
+            vault_handle,
+        ) {
             warn!("bridge failed to start: {err}");
         }
     }
@@ -126,9 +140,7 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     let hotkey_events = GlobalHotKeyEvent::receiver();
     let menu_events = MenuEvent::receiver();
 
-    info!(
-        "id4pii guard running — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo"
-    );
+    info!("id4pii guard running — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo");
 
     let mut event_loop = event_loop;
     let loop_tx = command_tx.clone();
@@ -264,7 +276,12 @@ fn spawn_feedback_adapter(rx: Receiver<Event>) {
         .name("id4pii-feedback-adapter".into())
         .spawn(move || {
             while let Ok(event) = rx.recv() {
-                if let Event::OperationCompleted { kind, source: Source::Hotkey { cursor }, .. } = event {
+                if let Event::OperationCompleted {
+                    kind,
+                    source: Source::Hotkey { cursor },
+                    ..
+                } = event
+                {
                     let feedback_kind = match kind {
                         OpKind::Anonymize => feedback::Kind::Anonymize,
                         OpKind::Restore | OpKind::Undo => feedback::Kind::Restore,

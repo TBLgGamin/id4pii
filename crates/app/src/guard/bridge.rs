@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender as StdSyncSender, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -17,13 +17,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
-use super::bus::{
-    BridgeReply, Command, Event, NoChangeReason, OpKind, OpSummary, Source,
-};
+use super::bus::{BridgeReply, Command, Event, NoChangeReason, OpKind, OpSummary, Source};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const EVENT_BROADCAST_CAPACITY: usize = 256;
-const ALLOWED_ORIGIN_PREFIXES: &[&str] = &[
+const PUBLISHED_EXTENSION_ID: &str = env!("ID4PII_PUBLISHED_EXTENSION_ID");
+const ALLOWED_ORIGIN_PREFIXES_DEV: &[&str] = &[
     "chrome-extension://",
     "moz-extension://",
     "safari-web-extension://",
@@ -35,10 +34,12 @@ struct AppState {
     event_tx: broadcast::Sender<Event>,
     next_client_id: Arc<AtomicU64>,
     vault: Arc<Mutex<Vault>>,
+    dev_extensions: bool,
 }
 
 pub(crate) fn spawn(
     port: u16,
+    dev_extensions: bool,
     command_tx: StdSyncSender<Command>,
     bus_rx: StdReceiver<Event>,
     vault: Arc<Mutex<Vault>>,
@@ -56,7 +57,8 @@ pub(crate) fn spawn(
                     return;
                 }
             };
-            if let Err(err) = runtime.block_on(run(port, command_tx, bus_rx, vault)) {
+            if let Err(err) = runtime.block_on(run(port, dev_extensions, command_tx, bus_rx, vault))
+            {
                 warn!("bridge stopped: {err}");
             }
         })
@@ -66,6 +68,7 @@ pub(crate) fn spawn(
 
 async fn run(
     port: u16,
+    dev_extensions: bool,
     command_tx: StdSyncSender<Command>,
     bus_rx: StdReceiver<Event>,
     vault: Arc<Mutex<Vault>>,
@@ -86,6 +89,7 @@ async fn run(
         event_tx,
         next_client_id: Arc::new(AtomicU64::new(1)),
         vault,
+        dev_extensions,
     };
 
     let app = Router::new()
@@ -119,10 +123,7 @@ async fn ws_upgrade(
         .get("origin")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let allowed = ALLOWED_ORIGIN_PREFIXES
-        .iter()
-        .any(|prefix| origin.starts_with(prefix));
-    if !allowed {
+    if !origin_allowed(origin, state.dev_extensions) {
         warn!("bridge rejected ws upgrade from {addr}, origin={origin:?}");
         return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
@@ -143,8 +144,14 @@ enum ClientMessage {
         #[serde(default)]
         tab_id: String,
     },
-    Anonymize { id: String, text: String },
-    Restore { id: String, text: String },
+    Anonymize {
+        id: String,
+        text: String,
+    },
+    Restore {
+        id: String,
+        text: String,
+    },
     VaultGet {
         #[serde(default)]
         #[allow(dead_code)]
@@ -270,7 +277,12 @@ async fn handle_client_message(
 ) -> Option<String> {
     match msg {
         ClientMessage::Hello { host, tab_id } => {
-            info!(client_id, host = host.as_str(), tab_id = tab_id.as_str(), "bridge hello");
+            info!(
+                client_id,
+                host = host.as_str(),
+                tab_id = tab_id.as_str(),
+                "bridge hello"
+            );
             let ack = serde_json::to_string(&ServerMessage::HelloAck { client_id }).ok()?;
             let snapshot = vault_snapshot_message(vault);
             match snapshot {
@@ -280,21 +292,40 @@ async fn handle_client_message(
         }
         ClientMessage::Anonymize { id, text } => {
             debug!(client_id, req_id = %id, msg_type = "anonymize", text_len = text.len(), "ws-msg-in");
-            let reply = run_text_op(command_tx, id.clone(), Source::Browser { client_id }, true, text).await;
+            let reply = run_text_op(
+                command_tx,
+                id.clone(),
+                Source::Browser { client_id },
+                true,
+                text,
+            )
+            .await;
             let out = serialize_reply(id.clone(), reply);
             debug!(client_id, req_id = %id, msg_type = "anonymize-reply", body_len = out.len(), "ws-msg-out");
             Some(out)
         }
         ClientMessage::Restore { id, text } => {
             debug!(client_id, req_id = %id, msg_type = "restore", text_len = text.len(), "ws-msg-in");
-            let reply = run_text_op(command_tx, id.clone(), Source::Browser { client_id }, false, text).await;
+            let reply = run_text_op(
+                command_tx,
+                id.clone(),
+                Source::Browser { client_id },
+                false,
+                text,
+            )
+            .await;
             let out = serialize_reply(id.clone(), reply);
             debug!(client_id, req_id = %id, msg_type = "restore-reply", body_len = out.len(), "ws-msg-out");
             Some(out)
         }
         ClientMessage::VaultGet { id: _ } => {
             let snap = vault_snapshot_message(vault);
-            debug!(client_id, kind = "vault-snapshot", body_len = snap.as_ref().map_or(0, std::string::String::len), "ws-msg-out");
+            debug!(
+                client_id,
+                kind = "vault-snapshot",
+                body_len = snap.as_ref().map_or(0, std::string::String::len),
+                "ws-msg-out"
+            );
             snap
         }
         ClientMessage::VaultClear { id } => {
@@ -309,6 +340,22 @@ async fn handle_client_message(
             serde_json::to_string(&ServerMessage::Pong {}).ok()
         }
     }
+}
+
+fn origin_allowed(origin: &str, dev_extensions: bool) -> bool {
+    if origin.is_empty() {
+        return false;
+    }
+    if dev_extensions {
+        return ALLOWED_ORIGIN_PREFIXES_DEV
+            .iter()
+            .any(|prefix| origin.starts_with(prefix));
+    }
+    if PUBLISHED_EXTENSION_ID.is_empty() {
+        return false;
+    }
+    let pinned = format!("chrome-extension://{PUBLISHED_EXTENSION_ID}");
+    origin == pinned || origin == format!("{pinned}/")
 }
 
 fn vault_snapshot_message(vault: &Arc<Mutex<Vault>>) -> Option<String> {
@@ -337,9 +384,19 @@ async fn run_text_op(
 ) -> Result<BridgeReply, String> {
     let (reply_tx, reply_rx) = sync_channel::<BridgeReply>(1);
     let cmd = if anonymize {
-        Command::AnonymizeText { req_id, source, text, reply: reply_tx }
+        Command::AnonymizeText {
+            req_id,
+            source,
+            text,
+            reply: reply_tx,
+        }
     } else {
-        Command::RestoreText { req_id, source, text, reply: reply_tx }
+        Command::RestoreText {
+            req_id,
+            source,
+            text,
+            reply: reply_tx,
+        }
     };
     let tx = command_tx.clone();
     let send_result = tokio::task::spawn_blocking(move || tx.try_send(cmd))
@@ -397,10 +454,7 @@ fn event_to_message(event: Event, client_id: u64) -> Option<String> {
         Event::VaultDelta { req_id, added } => {
             debug!(client_id, req_id = %req_id, added = added.len(), "event-forward-vault-delta");
             let payload = ServerMessage::VaultDelta {
-                added: added
-                    .into_iter()
-                    .map(|(fake, real)| [fake, real])
-                    .collect(),
+                added: added.into_iter().map(|(fake, real)| [fake, real]).collect(),
             };
             serde_json::to_string(&payload).ok()
         }
@@ -408,7 +462,12 @@ fn event_to_message(event: Event, client_id: u64) -> Option<String> {
             debug!(client_id, req_id = %req_id, removed, "event-forward-vault-cleared");
             serde_json::to_string(&ServerMessage::VaultCleared { removed }).ok()
         }
-        Event::OperationCompleted { req_id, kind, summary, source } => {
+        Event::OperationCompleted {
+            req_id,
+            kind,
+            summary,
+            source,
+        } => {
             let detail = match summary {
                 OpSummary::Anonymized { count } => format!("count={count}"),
                 OpSummary::Restored { count } => format!("count={count}"),
@@ -416,10 +475,18 @@ fn event_to_message(event: Event, client_id: u64) -> Option<String> {
             };
             forward_op_event(req_id, kind, "completed", detail, source, client_id)
         }
-        Event::OperationFailed { req_id, kind, error, source } => {
-            forward_op_event(req_id, kind, "failed", error, source, client_id)
-        }
-        Event::OperationNoChange { req_id, kind, reason, source } => forward_op_event(
+        Event::OperationFailed {
+            req_id,
+            kind,
+            error,
+            source,
+        } => forward_op_event(req_id, kind, "failed", error, source, client_id),
+        Event::OperationNoChange {
+            req_id,
+            kind,
+            reason,
+            source,
+        } => forward_op_event(
             req_id,
             kind,
             "no_change",
@@ -467,4 +534,3 @@ fn forward_op_event(
         }
     }
 }
-
