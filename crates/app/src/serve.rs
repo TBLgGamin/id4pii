@@ -68,6 +68,7 @@ pub(crate) async fn run(
     model_file: String,
     threads: usize,
 ) -> Result<()> {
+    crate::model_setup::ensure_model(&model, &model_file)?;
     let detector = Detector::load(&model, &model_file, threads).context("failed to load model")?;
     let state = AppState {
         detector: Arc::new(Mutex::new(detector)),

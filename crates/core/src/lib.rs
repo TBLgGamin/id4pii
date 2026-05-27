@@ -10,6 +10,8 @@ mod anonymize;
 mod detector;
 mod error;
 mod labels;
+pub mod model_dir;
+pub mod model_fetch;
 mod redact;
 
 pub use anonymize::{

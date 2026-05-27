@@ -6,7 +6,7 @@ members = ["crates/*"]
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/wajvandervlugt/id4pii"
+repository = "https://github.com/TBLgGamin/id4pii"
 
 [workspace.dependencies]
 id4pii-core = { path = "crates/core" }
