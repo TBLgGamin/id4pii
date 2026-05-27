@@ -5,42 +5,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot "lib\env.ps1")
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $src = Join-Path $repoRoot "extension"
 
 & (Join-Path $PSScriptRoot "sync-extension-assets.ps1")
 
-function Read-EnvFile([string]$Path) {
-  if (-not (Test-Path $Path)) {
-    throw ".env not found at $Path. Copy .env.example to .env and fill it in (see CONTRIBUTING.md)."
-  }
-  $values = @{}
-  foreach ($line in Get-Content -LiteralPath $Path) {
-    $trim = $line.Trim()
-    if ($trim -eq '' -or $trim.StartsWith('#')) { continue }
-    $eq = $trim.IndexOf('=')
-    if ($eq -lt 1) { continue }
-    $key = $trim.Substring(0, $eq).Trim()
-    $value = $trim.Substring($eq + 1).Trim()
-    if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
-        ($value.StartsWith("'") -and $value.EndsWith("'"))) {
-      $value = $value.Substring(1, $value.Length - 2)
-    }
-    $values[$key] = $value
-  }
-  return $values
-}
-
-function Require-Key([hashtable]$Values, [string]$Key) {
-  if (-not $Values.ContainsKey($Key)) {
-    throw "missing key '$Key' in .env (see .env.example)"
-  }
-  return $Values[$Key]
-}
-
-$env_values = Read-EnvFile -Path $EnvFile
-$installerUrl = Require-Key $env_values 'ID4PII_INSTALLER_URL'
-$version      = Require-Key $env_values 'ID4PII_APP_VERSION'
+$env_values   = Read-EnvFile -Path $EnvFile
+$installerUrl = Require-EnvKey -Values $env_values -Key 'ID4PII_INSTALLER_URL'
+$version      = Require-EnvKey -Values $env_values -Key 'ID4PII_APP_VERSION'
 
 $staging = Join-Path $OutDir "extension-staging"
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }

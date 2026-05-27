@@ -60,18 +60,31 @@ cargo fmt --all                     # format
 cargo clippy --all-targets          # lints (workspace is configured strict)
 ```
 
-## Loading the extension unpacked
+## Running guard locally
 
-For working on the Chrome extension without publishing to the Web Store:
+The shipped product is `id4pii-guard.exe` — a Windows-subsystem binary with no console. For development you usually want the console-attached version so you can watch logs in stderr:
 
 ```sh
-.\scripts\sync-extension-assets.ps1
 cargo run --release -p id4pii-app -- guard --dev-extensions
 ```
 
-Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `extension/` directory.
+Same code, console output. Logs also land in `%LOCALAPPDATA%\id4pii\logs\guard.log` either way.
+
+To exercise the no-console binary that end users actually run:
+
+```sh
+cargo run --release --bin id4pii-guard -- --dev-extensions
+```
 
 The `--dev-extensions` flag relaxes the bridge's origin check so any `chrome-extension://` ID can connect. Production builds pin the single Web Store ID from `.env`.
+
+## Loading the extension unpacked
+
+```sh
+.\scripts\sync-extension-assets.ps1
+```
+
+Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `extension/` directory. Guard must be running with `--dev-extensions` for the bridge to accept the connection (the production allowlist pins the single Web Store ID).
 
 ## Building the installer locally
 

@@ -14,17 +14,39 @@ Main use: sit **between your app and an LLM**. Swap real PII for realistic fake 
 
 ```
 crates/
-  core/   id4pii-core  — ONNX inference, span decoding, redaction, anonymization
-  app/    id4pii-app   — `id4pii` binary: scan / anonymize / deanonymize / serve / guard / install / uninstall / doctor
-extension/              — MV3 Chrome extension (background + content + main-world adapters)
-installer/              — Inno Setup script that builds id4pii-setup.exe
-scripts/                — build-installer.ps1, package-extension.ps1, sync-extension-assets.ps1
-.env.example            — every configurable value (extension ID, signing, version, etc.)
+  core/   id4pii-core      — ONNX inference, span decoding, redaction, anonymization, shared
+                             paths (data_root, model_dir, log_dir, vault_file)
+  app/    id4pii-app       — lib + two binaries:
+                               id4pii         (CLI; scan / anonymize / deanonymize / serve /
+                                              guard / install / uninstall / doctor; console
+                                              subsystem)
+                               id4pii-guard   (GUI subsystem, no console; reads the same
+                                              GuardArgs as `id4pii guard` but is the binary
+                                              shipped to end users for auto-start and
+                                              Start Menu)
+extension/                  — MV3 Chrome extension
+installer/                  — Inno Setup script + monochrome wizard BMPs
+scripts/                    — build/package scripts; lib/env.ps1 is the shared .env reader
+.env.example                — every configurable value (extension ID, signing, version, ...)
+```
+
+## Paths
+
+All on-disk locations are derived from `id4pii_core::paths::data_root()` (=`%LOCALAPPDATA%\id4pii\` on Windows, XDG/Library equivalents elsewhere). One source of truth — vault, model, and logs all live under here, so `id4pii uninstall` removes the directory atomically.
+
+```
+data_root/
+├── model/                # paths::model_dir()
+│   ├── config.json
+│   └── onnx/model_q4.onnx{,_data}
+├── logs/                 # paths::log_dir()
+│   └── guard.log         # rolling, daily, 7 retained
+└── vault.bin             # paths::vault_file() — DPAPI-encrypted vault
 ```
 
 ## Model
 
-- Default model dir: `%LOCALAPPDATA%\id4pii\model\` on Windows; XDG/Library-equivalent on Linux/macOS; falls back to `./model` if it has files (legacy dev layout).
+- Default model dir: `data_root/model/` (see above). Falls back to `./model` if it has files (legacy dev layout).
 - Override with `--model <dir>` or `ID4PII_MODEL`.
 - All entry points (`scan`, `anonymize`, `serve`, `guard`) call `model_setup::ensure_model` before `Detector::load`. If files are missing, the fetcher downloads `config.json`, `onnx/model_q4.onnx`, and `onnx/model_q4.onnx_data` from `huggingface.co/openai/privacy-filter/resolve/main/…`. Idempotent — sizes are HEAD-checked against the remote.
 - The tokenizer is **not** downloaded: id4pii embeds the `o200k_base` vocab via `tiktoken-rs`, which produces token ids identical to privacy-filter's own tokenizer (guarded by a regression test in `crates/core/src/detector.rs`).
@@ -67,11 +89,16 @@ id4pii serve --addr 127.0.0.1:8080
 
 ## Guard — system-wide hotkey (Windows)
 
-`id4pii guard` is a tray app that anonymizes PII in *any* application's text field — Claude Desktop, ChatGPT/Codex desktop, chatgpt.com/claude.ai in any browser, anything. It works through the Windows UI Automation accessibility layer (the same layer Grammarly uses), which sits *above* the network: the app itself sends the already-anonymized text, so there is no proxy, no certificate, and nothing for TLS pinning or anti-bot checks to detect.
+The guard is a system-tray daemon that anonymizes PII in *any* application's text field — Claude Desktop, ChatGPT/Codex desktop, chatgpt.com/claude.ai in any browser, anything. It works through the Windows UI Automation accessibility layer (the same layer Grammarly uses), which sits *above* the network: the app itself sends the already-anonymized text, so there is no proxy, no certificate, and nothing for TLS pinning or anti-bot checks to detect.
 
-```sh
-id4pii guard
-```
+It ships as **two binaries that share one codebase**:
+
+| Binary | Subsystem | When |
+|---|---|---|
+| `id4pii.exe guard` | console | dev iteration; piping stderr is useful |
+| `id4pii-guard.exe` | windows (no console) | the binary shipped to end users — autostart, Start Menu, post-install launch |
+
+Both parse the same `GuardArgs` (`crates/app/src/guard/mod.rs`) and call `guard::run`. The GUI binary additionally calls `logging::init_guard()` first, which writes to `data_root/logs/guard.log` (rotating daily, 7 retained). The CLI binary writes log lines to stderr through the existing `tracing_subscriber::fmt()` setup.
 
 Three global hotkeys, all operating on the currently focused editable field:
 
@@ -81,7 +108,9 @@ Three global hotkeys, all operating on the currently focused editable field:
 
 All three rewrite the focused field directly — there is no popup or read-only overlay. The vault is shared across every app and every browser tab for the life of the process, so a real value anonymized once is restored consistently everywhere.
 
-A single **vault** (persisted via DPAPI at `%LOCALAPPDATA%\id4pii\vault.bin`) is the id system that makes this reversible: every distinct real value is stored once with its category and a unique surrogate, so the same name always maps to the same surrogate and an email maps to its own — restoration is unambiguous in both directions. The vault is shared across every app and every tab, so a value anonymized in one place restores in another. Surrogates are generated procedurally (street addresses, URLs) or from large name pools, so the supply is effectively unbounded — fiction-safe phone numbers (`555-01xx`) are the one deliberately small set.
+The tray menu carries: bridge status (informational), **Open log file**, **Open log folder**, and **Quit id4pii guard**. The log items shell out via `cmd /C start "" <path>` so whatever the user has registered for `.log` (Notepad by default) and Explorer open the resolved `data_root/logs/...` path.
+
+A single **vault** (persisted via DPAPI at `data_root/vault.bin`) is the id system that makes this reversible: every distinct real value is stored once with its category and a unique surrogate, so the same name always maps to the same surrogate and an email maps to its own — restoration is unambiguous in both directions. The vault is shared across every app and every tab, so a value anonymized in one place restores in another. Surrogates are generated procedurally (street addresses, URLs) or from large name pools, so the supply is effectively unbounded — fiction-safe phone numbers (`555-01xx`) are the one deliberately small set.
 
 Notes: the guard reads and writes via UI Automation, falling back to a clipboard select-all + copy/paste for rich editors (browser `contenteditable`, some Electron apps) that do not expose direct value access. The `guard` subcommand is Windows only (macOS AX API and Linux AT-SPI are future work); the module is `cfg(windows)`-gated, so the workspace still builds on other platforms — only the subcommand is absent there.
 
@@ -103,7 +132,7 @@ Run it whenever `assets/icon-*.png` or `assets/lock_frames/*.png` change. After 
 
 Production users install the extension from the Chrome Web Store and the engine via the EXE installer. For development against an unpublished extension build:
 
-1. Run `id4pii guard --dev-extensions` — the bridge listens on `ws://127.0.0.1:7878/ws` and the `--dev-extensions` flag relaxes the origin check so any locally-loaded `chrome-extension://…` can connect. Production builds pin a single published Web Store ID (from `.env`).
+1. Run `cargo run -p id4pii-app -- guard --dev-extensions` (console; live logs on stderr) or `cargo run --bin id4pii-guard -- --dev-extensions` (no console; logs to file). The bridge listens on `ws://127.0.0.1:7878/ws`; `--dev-extensions` relaxes the origin check so any locally-loaded `chrome-extension://…` can connect. Production builds pin a single published Web Store ID from `.env`.
 2. In Chrome: `chrome://extensions` → **Developer mode** → **Load unpacked** → select the `extension/` directory.
 3. The toolbar icon shows a solid green badge when connected, `!` when the bridge is unreachable.
 
@@ -138,11 +167,15 @@ Privacy invariant: no message text, response body, or vault entry is ever logged
 
 ## Install / uninstall / doctor
 
-The Windows binary ships three configuration subcommands that the Inno installer calls:
+The CLI binary (`id4pii.exe`) ships three configuration subcommands that the Inno installer calls:
 
-- `id4pii install --with-model --register-extension <id> --autostart` — fetches the model, writes the Chrome external-extension registry key (`HKLM\…\Chrome\Extensions\<id>` with the Web Store `update_url`), and registers `HKCU\…\Run\id4pii` for auto-start.
-- `id4pii uninstall` — removes `%LOCALAPPDATA%\id4pii\` (model + DPAPI vault), the Run entry, and the Chrome registry key. Pass `--keep-model` to keep the model on disk.
+- `id4pii install --with-model --register-extension <id> --autostart` — fetches the model, writes the Chrome external-extension registry key (`HKLM\…\Chrome\Extensions\<id>` with the Web Store `update_url`), and registers `HKCU\…\Run\id4pii` to launch the *guard* binary (sibling `id4pii-guard.exe`) on login.
+- `id4pii uninstall` — removes `data_root` (model + DPAPI vault + logs), the Run entry, and the Chrome registry key. Pass `--keep-model` to keep the model on disk.
 - `id4pii doctor [--extension-id <id>]` — prints JSON: `{ model_present, model_dir, autostart, registry_chrome, bridge_reachable, published_extension_id_placeholder }`.
+
+## Installer
+
+`installer/id4pii.iss` (Inno Setup 6) bundles both binaries, registers shortcuts (Start Menu group "id4pii" with **id4pii**, **Open id4pii log folder**, **Uninstall**, plus optional desktop icon), and runs `id4pii.exe install --with-model` post-install. The wizard uses Inno's modern style with two custom BMPs at `installer/wizard-image.bmp` and `installer/wizard-small.bmp` rendered from the shield logo on a near-black canvas — closest the installer toolkit gets to a shadcn dark-mode look. Regenerate the BMPs with `python scripts/generate-wizard-images.py` if the logo changes. Full shadcn-styled installer UI is not possible inside Inno (Pascal + native VCL widgets); switching to Tauri's bundler or WiX-with-WPF would be required for that and is out of scope.
 
 ## Performance
 
