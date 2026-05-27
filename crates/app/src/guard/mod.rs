@@ -24,20 +24,20 @@ use self::bus::{Command, EngineStatus, Event, EventBus, OpKind, Source};
 use self::engine::Engine;
 use self::store::DpapiStore;
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 pub(crate) struct GuardArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value_os_t = id4pii_core::model_dir::default_dir())]
-    model: PathBuf,
+    pub(crate) model: PathBuf,
     #[arg(long, default_value = id4pii_core::model_dir::DEFAULT_MODEL_FILE)]
-    model_file: String,
+    pub(crate) model_file: String,
     #[arg(long, default_value_t = 0)]
-    threads: usize,
+    pub(crate) threads: usize,
     #[arg(long, default_value_t = 7878)]
-    bridge_port: u16,
+    pub(crate) bridge_port: u16,
     #[arg(long)]
-    no_bridge: bool,
+    pub(crate) no_bridge: bool,
     #[arg(long)]
-    dev_extensions: bool,
+    pub(crate) dev_extensions: bool,
 }
 
 pub(crate) fn run(args: &GuardArgs) -> Result<()> {
@@ -115,8 +115,18 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
         format!("Browser bridge: ws://127.0.0.1:{}/ws", args.bridge_port)
     };
     let bridge_item = MenuItem::new(bridge_label, false, None);
+    let log_dir = id4pii_core::paths::log_dir();
+    let log_file_path = log_dir.as_ref().map(|d| d.join("guard.log"));
+    let show_log_item = MenuItem::new("Open log file", log_file_path.is_some(), None);
+    let open_log_folder_item = MenuItem::new("Open log folder", log_dir.is_some(), None);
     let quit_item = MenuItem::new("Quit id4pii guard", true, None);
     menu.append(&bridge_item)
+        .context("failed to build the tray menu")?;
+    menu.append(&PredefinedMenuItem::separator())
+        .context("failed to build the tray menu")?;
+    menu.append(&show_log_item)
+        .context("failed to build the tray menu")?;
+    menu.append(&open_log_folder_item)
         .context("failed to build the tray menu")?;
     menu.append(&PredefinedMenuItem::separator())
         .context("failed to build the tray menu")?;
@@ -195,6 +205,14 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
             if event.id == quit_item.id() {
                 let _ = loop_tx.try_send(Command::Shutdown);
                 *control_flow = ControlFlow::Exit;
+            } else if event.id == show_log_item.id() {
+                if let Some(path) = log_file_path.as_ref() {
+                    open_with_shell(path);
+                }
+            } else if event.id == open_log_folder_item.id() {
+                if let Some(dir) = log_dir.as_ref() {
+                    open_with_shell(dir);
+                }
             }
         }
     });
@@ -304,6 +322,16 @@ fn tray_icon() -> Icon {
                 .unwrap_or_else(|_| fallback_icon())
         }
         Err(_) => fallback_icon(),
+    }
+}
+
+fn open_with_shell(path: &std::path::Path) {
+    if let Err(err) = std::process::Command::new("cmd")
+        .args(["/C", "start", ""])
+        .arg(path)
+        .spawn()
+    {
+        warn!("could not open {}: {err}", path.display());
     }
 }
 
