@@ -90,12 +90,26 @@ jobs:
           name: extension-zip
           path: ./artifacts
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          version="${{ needs.build-windows.outputs.version }}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no CHANGELOG entry found for v$version" >&2
+            echo "_No CHANGELOG entry for v${version}._" > release-notes.md
+          fi
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes \
+            --notes-file release-notes.md \
             ./artifacts/id4pii-setup.exe \
             ./artifacts/id4pii-extension-v${{ needs.build-windows.outputs.version }}.zip

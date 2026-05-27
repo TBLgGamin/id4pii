@@ -103,7 +103,8 @@ The `v*` tag push triggers `.github/workflows/release.yml`. It will:
 1. Materialize `.env` from repo secrets
 2. Build the release binary on `windows-latest`
 3. Run `scripts/build-installer.ps1` + `scripts/package-extension.ps1`
-4. Create a GitHub Release with `id4pii-setup.exe` and `id4pii-extension-v<version>.zip` attached
+4. **Extract the matching `## [<version>]` block from `CHANGELOG.md`** and use it as the release notes body (via `awk`). If no matching block exists the release falls back to a placeholder — so the CHANGELOG entry must be written *before* tagging.
+5. Create a GitHub Release with `id4pii-setup.exe` and `id4pii-extension-v<version>.zip` attached
 
 ### 6. Confirm the workflow kicked off
 
