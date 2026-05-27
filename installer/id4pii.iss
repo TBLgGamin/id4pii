@@ -42,6 +42,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
+UsedUserAreasWarning=no
 CloseApplications=force
 RestartApplications=no
 #if SignToolCmd != ""
@@ -72,7 +73,7 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "install --with-model"; Descripti
 Filename: "{app}\{#MyAppExeName}"; Parameters: "guard"; Description: "Launch id4pii guard now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "uninstall"; Flags: runhidden
+Filename: "{app}\{#MyAppExeName}"; Parameters: "uninstall"; RunOnceId: "id4pii_uninstall"; Flags: runhidden
 
 [Code]
 function ChromeExtensionConfigured(): Boolean;

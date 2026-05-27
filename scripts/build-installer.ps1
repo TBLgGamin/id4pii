@@ -60,12 +60,28 @@ if (-not $SkipAssetSync) {
   & (Join-Path $PSScriptRoot "sync-extension-assets.ps1")
 }
 
-$iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $iscc)) {
-  $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+function Find-Iscc {
+  $candidates = @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+  )
+  foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+  return $null
 }
-if (-not (Test-Path $iscc)) {
-  throw "Inno Setup 6 not found. Install from https://jrsoftware.org/isdl.php"
+
+$iscc = Find-Iscc
+if (-not $iscc) {
+  $hasWinget = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+  if (-not $hasWinget) {
+    throw "Inno Setup 6 not found and winget is unavailable. Install Inno Setup 6 from https://jrsoftware.org/isdl.php"
+  }
+  Write-Host "==> Installing Inno Setup 6 via winget (one-time)"
+  winget install --id JRSoftware.InnoSetup -e --accept-source-agreements --accept-package-agreements --silent
+  if ($LASTEXITCODE -ne 0) { throw "winget install JRSoftware.InnoSetup failed (exit $LASTEXITCODE)" }
+  $iscc = Find-Iscc
+  if (-not $iscc) {
+    throw "Inno Setup 6 still not found after winget install. Check winget output above."
+  }
 }
 
 $isccArgs = @(
