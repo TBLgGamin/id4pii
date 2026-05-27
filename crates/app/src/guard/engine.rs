@@ -13,8 +13,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use super::automation;
 use super::bus::{
-    BridgeReply, Command, EngineStatus, Event, EventBus, NoChangeReason, OpKind, OpSummary,
-    Source,
+    BridgeReply, Command, EngineStatus, Event, EventBus, NoChangeReason, OpKind, OpSummary, Source,
 };
 use super::store::VaultStore;
 
@@ -131,12 +130,22 @@ impl Engine {
                 self.handle_undo(req_id, source);
                 self.status.end();
             }
-            Command::AnonymizeText { req_id, source, text, reply } => {
+            Command::AnonymizeText {
+                req_id,
+                source,
+                text,
+                reply,
+            } => {
                 self.status.begin(OpKind::Anonymize);
                 self.handle_anonymize_text(req_id, source, text, reply);
                 self.status.end();
             }
-            Command::RestoreText { req_id, source, text, reply } => {
+            Command::RestoreText {
+                req_id,
+                source,
+                text,
+                reply,
+            } => {
                 self.status.begin(OpKind::Restore);
                 self.handle_restore_text(req_id, source, text, reply);
                 self.status.end();
@@ -260,8 +269,12 @@ impl Engine {
             captured_at: Instant::now(),
         });
 
-        info!(elapsed_ms = started.elapsed().as_millis() as u64, "anonymized PII in the focused field");
-        let added: Vec<(String, String)> = subs.into_iter().map(|(real, fake)| (fake, real)).collect();
+        info!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "anonymized PII in the focused field"
+        );
+        let added: Vec<(String, String)> =
+            subs.into_iter().map(|(real, fake)| (fake, real)).collect();
         debug!(subs_count = added.len(), "vault-delta-publish");
         self.bus.publish(Event::VaultDelta {
             req_id: req_id.clone(),
@@ -345,7 +358,10 @@ impl Engine {
             captured_at: Instant::now(),
         });
 
-        info!(elapsed_ms = started.elapsed().as_millis() as u64, "restored real values in the focused field");
+        info!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "restored real values in the focused field"
+        );
         self.bus.publish(Event::OperationCompleted {
             req_id,
             kind: OpKind::Restore,
@@ -553,10 +569,7 @@ impl Engine {
                 self.undo = None;
                 info!(removed, "vault cleared");
                 self.bus.publish(Event::VaultSaved { entries: 0 });
-                self.bus.publish(Event::VaultCleared {
-                    req_id,
-                    removed,
-                });
+                self.bus.publish(Event::VaultCleared { req_id, removed });
             }
             Err(err) => {
                 error!("vault save (clear): {err}");
@@ -653,9 +666,7 @@ fn detect_with_timeout(
 ) -> Result<Vec<id4pii_core::PiiSpan>> {
     let det = Arc::clone(detector);
     run_with_timeout("detect", DETECT_TIMEOUT, move || {
-        let mut guard = det
-            .lock()
-            .map_err(|_| anyhow!("detector mutex poisoned"))?;
+        let mut guard = det.lock().map_err(|_| anyhow!("detector mutex poisoned"))?;
         guard.detect(&text).map_err(|e| anyhow!("{e}"))
     })
 }

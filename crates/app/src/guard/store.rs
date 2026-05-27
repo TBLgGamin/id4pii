@@ -63,7 +63,6 @@ impl DpapiStore {
         fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
         Ok(dir.join("vault.bin"))
     }
-
 }
 
 impl VaultStore for DpapiStore {

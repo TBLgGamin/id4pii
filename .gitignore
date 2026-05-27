@@ -6,3 +6,5 @@
 .DS_Store
 /scripts/node_modules*
 /extension/assets/
+/dist/
+/installer/dist/

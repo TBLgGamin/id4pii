@@ -37,9 +37,18 @@ pub(crate) enum Source {
 
 #[derive(Debug)]
 pub(crate) enum Command {
-    Anonymize { req_id: String, source: Source },
-    Restore { req_id: String, source: Source },
-    Undo { req_id: String, source: Source },
+    Anonymize {
+        req_id: String,
+        source: Source,
+    },
+    Restore {
+        req_id: String,
+        source: Source,
+    },
+    Undo {
+        req_id: String,
+        source: Source,
+    },
     AnonymizeText {
         req_id: String,
         source: Source,
@@ -227,7 +236,9 @@ impl EngineStatus {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.as_ref().map(|b| (b.kind, b.step, b.started_at.elapsed()))
+        guard
+            .as_ref()
+            .map(|b| (b.kind, b.step, b.started_at.elapsed()))
     }
 
     pub(crate) fn record_completed(&self, kind: OpKind) {
