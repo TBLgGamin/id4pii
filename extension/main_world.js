@@ -5,17 +5,18 @@
   LOG.info("main", "boot", { host: location.hostname });
 
   const CHAT_PATTERNS = [
-    /\/backend-api\/conversation/,
-    /\/backend-anon\/conversation/,
+    /\/backend-api\/(?:[^/]+\/)?conversation/,
+    /\/backend-anon\/(?:[^/]+\/)?conversation/,
     /\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/completion/,
     /\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/retry_completion/,
     /\/api\/append_message/,
-    /\/_\/BardChatUi\/data\/.*GenerateContent/i,
-    /\/_\/BardChatUi\/data\/.*StreamGenerate/i,
+    /\/_\/BardChatUi\/data\/.*(?:GenerateContent|StreamGenerate)/i,
     /\/v1beta\/models\/.*:streamGenerateContent/,
     /\/v1\/messages/,
     /\/v1\/chat\/completions/,
   ];
+
+  const GEMINI_PATTERN = /\/_\/BardChatUi\/data\//;
 
   const SURROGATE_BUFFER = 80;
   const REQUEST_TIMEOUT_MS = 30000;
@@ -40,6 +41,11 @@
         .map((e) => [e.fake, e.real])
         .sort((a, b) => b[0].length - a[0].length);
       LOG.debug("main", "vault-update", { size: vaultPairs.length });
+      if (restoreRoot && vaultPairs.length > 0) {
+        const before = domRestoreCount;
+        walkRestore(restoreRoot);
+        if (domRestoreCount > before) LOG.debug("main", "dom-restore-on-vault-update", { delta: domRestoreCount - before });
+      }
     } else if (msg.type === "anonymize-reply") {
       const p = pending.get(msg.id);
       if (!p) return;
@@ -190,6 +196,74 @@
     cur[path[path.length - 1]] = value;
   }
 
+  async function anonymizeGeminiBody(reqId, rawBody) {
+    let fReq = null;
+    let writeBack = null;
+    let bodyKind = "unknown";
+
+    if (typeof rawBody === "string") {
+      bodyKind = "string";
+      let params;
+      try { params = new URLSearchParams(rawBody); } catch { return rawBody; }
+      fReq = params.get("f.req");
+      writeBack = (v) => { params.set("f.req", v); return params.toString(); };
+    } else if (rawBody instanceof URLSearchParams) {
+      bodyKind = "urlsearchparams";
+      fReq = rawBody.get("f.req");
+      writeBack = (v) => { rawBody.set("f.req", v); return rawBody; };
+    } else if (rawBody instanceof FormData) {
+      bodyKind = "formdata";
+      const v = rawBody.get("f.req");
+      if (typeof v === "string") fReq = v;
+      writeBack = (vv) => { rawBody.set("f.req", vv); return rawBody; };
+    } else if (rawBody instanceof Blob) {
+      bodyKind = "blob";
+      try {
+        const text = await rawBody.text();
+        let params;
+        try { params = new URLSearchParams(text); } catch { return rawBody; }
+        fReq = params.get("f.req");
+        writeBack = (v) => { params.set("f.req", v); return params.toString(); };
+      } catch { return rawBody; }
+    }
+
+    LOG.debug("main", "gemini-body-kind", { reqId, bodyKind, hasFReq: typeof fReq === "string" });
+
+    if (typeof fReq !== "string" || !writeBack) return rawBody;
+
+    let outer;
+    try { outer = JSON.parse(fReq); } catch { return rawBody; }
+    if (!Array.isArray(outer) || outer.length < 2 || typeof outer[1] !== "string") {
+      LOG.debug("main", "gemini-outer-shape-unexpected", { reqId });
+      return rawBody;
+    }
+    let inner;
+    try { inner = JSON.parse(outer[1]); } catch { return rawBody; }
+    if (!Array.isArray(inner) || !Array.isArray(inner[0]) || typeof inner[0][0] !== "string") {
+      LOG.debug("main", "gemini-inner-shape-unexpected", { reqId });
+      return rawBody;
+    }
+    const userMessage = inner[0][0];
+    if (!userMessage) return rawBody;
+    if (containsKnownSurrogate(userMessage)) {
+      LOG.debug("main", "gemini-skip-has-surrogate", { reqId, len: userMessage.length });
+      return rawBody;
+    }
+    let out;
+    try {
+      out = await callAnonymize(`${reqId}-gem`, userMessage);
+    } catch (err) {
+      if (typeof err === "string" && err.startsWith("no_change:")) return rawBody;
+      LOG.warn("main", "gemini-anonymize-error", { reqId, error: String(err) });
+      return rawBody;
+    }
+    if (typeof out !== "string" || out === userMessage) return rawBody;
+    LOG.debug("main", "fetch-field-anonymized", { reqId, pathTail: "f.req[0][0]", lenBefore: userMessage.length, lenAfter: out.length, changed: true, bodyKind });
+    inner[0][0] = out;
+    outer[1] = JSON.stringify(inner);
+    return writeBack(JSON.stringify(outer));
+  }
+
   async function anonymizeBodyString(reqId, text) {
     if (!text || text.length < MIN_INTERESTING_BODY) return text;
     let parsed;
@@ -252,7 +326,7 @@
   function shouldWrapResponse(response) {
     if (!response || !response.body) return false;
     const ct = (response.headers.get("content-type") || "").toLowerCase();
-    return /^(application\/json|application\/x-ndjson|text\/event-stream|text\/plain)/.test(ct);
+    return /^(application\/(?:json|x-ndjson|javascript|json\+protobuf)|text\/(?:event-stream|plain|javascript|html))/.test(ct);
   }
 
   function waitForVault(timeoutMs) {
@@ -331,47 +405,67 @@
   window.fetch = async function (input, init) {
     let url = "";
     let method = "GET";
-    let body = null;
+    let rawBody = null;
     if (input instanceof Request) {
       url = input.url;
       method = input.method;
-      if (!init || init.body == null) {
-        try { body = await input.clone().text(); } catch { body = null; }
-      }
     } else {
       url = urlOf(input);
     }
     if (init) {
       if (init.method) method = init.method;
-      if (init.body != null) body = await bodyAsString(init.body);
+      if (init.body != null) rawBody = init.body;
+    }
+    if (rawBody == null && input instanceof Request) {
+      try { rawBody = await input.clone().text(); } catch {}
     }
 
     const chat = isChatRequest(url, method);
+    const isGemini = chat && GEMINI_PATTERN.test(url);
     const reqId = LOG.newReqId();
-    LOG.debug("main", "fetch-intercept", { reqId, urlPathTail: urlPathTail(url), method, isChat: chat, hasBody: body != null });
+    LOG.debug("main", "fetch-intercept", {
+      reqId, urlPathTail: urlPathTail(url), method, isChat: chat,
+      isGemini, hasBody: rawBody != null, bodyType: rawBody == null ? "none" : (rawBody.constructor && rawBody.constructor.name) || typeof rawBody,
+    });
 
-    if (chat && body != null) {
-      const safe = await anonymizeBodyString(reqId, body);
-      if (safe !== body) {
-        LOG.debug("main", "fetch-body-out", { reqId, sizeBefore: body.length, sizeAfter: safe.length, changed: true });
-        sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
-        if (init) {
-          init = { ...init, body: safe };
-        } else if (input instanceof Request) {
-          input = new Request(input, { body: safe });
+    if (chat && rawBody != null) {
+      if (isGemini) {
+        const newBody = await anonymizeGeminiBody(reqId, rawBody);
+        if (newBody !== rawBody) {
+          LOG.debug("main", "fetch-body-out", { reqId, kind: "gemini", changed: true });
+          sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
+          init = { ...(init || {}), body: newBody };
         } else {
-          init = { method, body: safe };
+          LOG.debug("main", "fetch-body-out", { reqId, kind: "gemini", changed: false });
         }
       } else {
-        LOG.debug("main", "fetch-body-out", { reqId, sizeBefore: body.length, sizeAfter: safe.length, changed: false });
+        const bodyText = await bodyAsString(rawBody);
+        if (bodyText != null) {
+          const safe = await anonymizeBodyString(reqId, bodyText);
+          if (safe !== bodyText) {
+            LOG.debug("main", "fetch-body-out", { reqId, sizeBefore: bodyText.length, sizeAfter: safe.length, changed: true });
+            sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
+            if (init) {
+              init = { ...init, body: safe };
+            } else if (input instanceof Request) {
+              input = new Request(input, { body: safe });
+            } else {
+              init = { method, body: safe };
+            }
+          } else {
+            LOG.debug("main", "fetch-body-out", { reqId, sizeBefore: bodyText.length, sizeAfter: safe.length, changed: false });
+          }
+        }
       }
     }
 
     const response = await origFetch(input, init);
+    if (isGemini) return response;
     return wrapStreamingResponse(reqId, response);
   };
 
   const OrigXHR = window.XMLHttpRequest;
+
   function PatchedXHR() {
     const xhr = new OrigXHR();
     let url = "";
@@ -388,8 +482,17 @@
         return origSend(bodyArg);
       }
       const reqId = LOG.newReqId();
-      LOG.debug("main", "xhr-intercept", { reqId, urlPathTail: urlPathTail(url), method });
-      (async () => {
+      const isGemini = GEMINI_PATTERN.test(url);
+      LOG.debug("main", "xhr-intercept", { reqId, urlPathTail: urlPathTail(url), method, isGemini });
+        (async () => {
+        if (isGemini && bodyArg != null) {
+          const newBody = await anonymizeGeminiBody(reqId, bodyArg);
+          if (newBody !== bodyArg) {
+            sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
+          }
+          origSend(newBody);
+          return;
+        }
         const text = await bodyAsString(bodyArg);
         if (text == null) {
           return origSend(bodyArg);
@@ -410,6 +513,71 @@
   PatchedXHR.prototype = OrigXHR.prototype;
   Object.setPrototypeOf(PatchedXHR, OrigXHR);
   window.XMLHttpRequest = PatchedXHR;
+
+  const RESTORED_NODES = new WeakSet();
+  let restoreObserver = null;
+  let restoreRoot = null;
+  let domRestoreCount = 0;
+
+  function shouldSkipForRestore(el) {
+    const tag = el.tagName;
+    return tag === "SCRIPT" || tag === "STYLE";
+  }
+
+  function restoreTextNode(node) {
+    if (!node) return;
+    if (RESTORED_NODES.has(node)) return;
+    const orig = node.nodeValue;
+    if (!orig || vaultPairs.length === 0) return;
+    const { out: restored, count } = restoreString(orig);
+    if (count > 0 && restored !== orig) {
+      node.nodeValue = restored;
+      domRestoreCount += count;
+    }
+    RESTORED_NODES.add(node);
+  }
+
+  function walkRestore(node) {
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      restoreTextNode(node);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (shouldSkipForRestore(node)) return;
+    for (const child of Array.from(node.childNodes)) walkRestore(child);
+  }
+
+  function ensureRestoreObserver() {
+    const root = document.body;
+    if (!root || root === restoreRoot) return;
+    if (restoreObserver) restoreObserver.disconnect();
+    restoreRoot = root;
+    restoreObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "characterData") {
+          RESTORED_NODES.delete(m.target);
+          restoreTextNode(m.target);
+        } else if (m.type === "childList") {
+          for (const n of m.addedNodes) walkRestore(n);
+        }
+      }
+    });
+    restoreObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    walkRestore(root);
+    LOG.debug("main", "dom-restore-observer-installed");
+  }
+
+  ensureRestoreObserver();
+  setInterval(ensureRestoreObserver, 1500);
+
+  let lastDomRestoreLog = 0;
+  setInterval(() => {
+    if (domRestoreCount !== lastDomRestoreLog) {
+      LOG.debug("main", "dom-restore-progress", { total: domRestoreCount });
+      lastDomRestoreLog = domRestoreCount;
+    }
+  }, 2000);
 
   LOG.info("main", "patched");
   sendToIsolated({ type: "ready" });
