@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$EnvFile = (Join-Path $PSScriptRoot ".." ".env"),
+  [string]$EnvFile = (Join-Path (Join-Path $PSScriptRoot "..") ".env"),
   [switch]$SkipCargo,
   [switch]$SkipAssetSync
 )

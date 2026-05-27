@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$EnvFile = (Join-Path $PSScriptRoot ".." ".env"),
-  [string]$OutDir  = (Join-Path $PSScriptRoot ".." "dist")
+  [string]$EnvFile = (Join-Path (Join-Path $PSScriptRoot "..") ".env"),
+  [string]$OutDir  = (Join-Path (Join-Path $PSScriptRoot "..") "dist")
 )
 
 $ErrorActionPreference = 'Stop'
