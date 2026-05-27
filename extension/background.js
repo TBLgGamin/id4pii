@@ -22,18 +22,58 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.tabs.create({ url }).catch(() => {});
 });
 
-const BADGE_STYLES = {
-  connected: { color: "#2EB88A" },
-  warning:   { color: "#F5A524" },
-  error:     { color: "#B83A2E" },
+const STATE_COLORS = {
+  connected: "#2EB88A",
+  warning:   "#F5A524",
+  error:     "#B83A2E",
 };
+const ICON_SIZES = [16, 32, 48, 128];
+const baseIconCache = new Map();
+let lastBadgeState = null;
 
-function setBadge(state) {
-  const style = BADGE_STYLES[state] || BADGE_STYLES.error;
-  chrome.action.setBadgeText({ text: "●" }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ color: style.color }).catch(() => {});
-  if (chrome.action.setBadgeTextColor) {
-    chrome.action.setBadgeTextColor({ color: style.color }).catch(() => {});
+chrome.action.setBadgeText({ text: "" }).catch(() => {});
+
+async function loadBaseIcon(size) {
+  if (baseIconCache.has(size)) return baseIconCache.get(size);
+  const url = chrome.runtime.getURL(`assets/icon-${size}.png`);
+  const blob = await fetch(url).then((r) => r.blob());
+  const bitmap = await createImageBitmap(blob);
+  baseIconCache.set(size, bitmap);
+  return bitmap;
+}
+
+async function renderIcon(size, color) {
+  const bitmap = await loadBaseIcon(size);
+  const canvas = new OffscreenCanvas(size, size);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(bitmap, 0, 0, size, size);
+  const r = Math.max(2, Math.round(size * 0.18));
+  const inset = Math.max(1, Math.round(size * 0.06));
+  const cx = size - r - inset;
+  const cy = size - r - inset;
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + Math.max(1, Math.round(size * 0.05)), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  return ctx.getImageData(0, 0, size, size);
+}
+
+async function setBadge(state) {
+  if (state === lastBadgeState) return;
+  lastBadgeState = state;
+  const color = STATE_COLORS[state] || STATE_COLORS.error;
+  try {
+    const imageData = {};
+    for (const size of ICON_SIZES) {
+      imageData[size] = await renderIcon(size, color);
+    }
+    await chrome.action.setIcon({ imageData });
+  } catch (err) {
+    LOG.warn("bg", "set-icon-failed", { error: String(err) });
   }
 }
 
