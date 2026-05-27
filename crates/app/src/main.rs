@@ -7,6 +7,9 @@
 
 #[cfg(windows)]
 mod guard;
+#[cfg(windows)]
+mod install;
+mod model_setup;
 mod progress;
 mod serve;
 
@@ -15,7 +18,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use id4pii_core::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
+use id4pii_core::{
+    Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, model_dir, redact,
+};
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
@@ -38,13 +43,19 @@ enum Command {
     Serve(ServeArgs),
     #[cfg(windows)]
     Guard(guard::GuardArgs),
+    #[cfg(windows)]
+    Install(install::InstallArgs),
+    #[cfg(windows)]
+    Uninstall(install::UninstallArgs),
+    #[cfg(windows)]
+    Doctor(install::DoctorArgs),
 }
 
 #[derive(Args)]
 struct ModelArgs {
-    #[arg(long, env = "ID4PII_MODEL", default_value = "model")]
+    #[arg(long, env = "ID4PII_MODEL", default_value_os_t = model_dir::default_dir())]
     model: PathBuf,
-    #[arg(long, default_value = "onnx/model_q4.onnx")]
+    #[arg(long, default_value = model_dir::DEFAULT_MODEL_FILE)]
     model_file: String,
     #[arg(long, default_value_t = 0)]
     threads: usize,
@@ -148,11 +159,18 @@ async fn main() -> Result<()> {
         }
         #[cfg(windows)]
         Command::Guard(args) => guard::run(&args),
+        #[cfg(windows)]
+        Command::Install(args) => install::run_install(&args),
+        #[cfg(windows)]
+        Command::Uninstall(args) => install::run_uninstall(&args),
+        #[cfg(windows)]
+        Command::Doctor(args) => install::run_doctor(&args),
     }
 }
 
 fn run_scan(args: &ScanArgs) -> Result<()> {
     let text = read_input(args.text.as_ref(), args.file.as_ref())?;
+    model_setup::ensure_model(&args.model.model, &args.model.model_file)?;
     let mut detector = Detector::load(
         &args.model.model,
         &args.model.model_file,
@@ -175,6 +193,7 @@ fn run_scan(args: &ScanArgs) -> Result<()> {
 
 fn run_anonymize(args: &AnonymizeArgs) -> Result<()> {
     let text = read_input(args.text.as_ref(), args.file.as_ref())?;
+    model_setup::ensure_model(&args.model.model, &args.model.model_file)?;
     let mut detector = Detector::load(
         &args.model.model,
         &args.model.model_file,
