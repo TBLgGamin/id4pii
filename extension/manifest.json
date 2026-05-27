@@ -3,14 +3,7 @@
   "name": "id4pii guard",
   "version": "0.1.0",
   "description": "Local PII anonymization for ChatGPT, Claude, and Gemini. Swaps real names and emails for stand-ins before the request goes out.",
-  "permissions": ["storage", "tabs"],
-  "host_permissions": [
-    "*://chatgpt.com/*",
-    "*://*.openai.com/*",
-    "*://claude.ai/*",
-    "*://*.claude.ai/*",
-    "*://gemini.google.com/*"
-  ],
+  "permissions": ["storage"],
   "background": {
     "service_worker": "background.js"
   },

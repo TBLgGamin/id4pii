@@ -116,7 +116,7 @@ Notes: the guard reads and writes via UI Automation, falling back to a clipboard
 
 ## Browser extension
 
-The MV3 extension in `extension/` is `id4pii guard` for LLM sites: ChatGPT, Claude, Gemini (and any others wired into the host allowlist). When you submit, it pulls your text out of the input, hands it to the local `guard` process over a loopback WebSocket, replaces it with the anonymized version, then submits. When the assistant's reply streams in, surrogates are auto-restored to real values in the rendered text — a `MutationObserver` driving the same pure `deanonymize` string-replace used by the CLI.
+The MV3 extension in `extension/` is `id4pii guard` for LLM sites: ChatGPT, Claude, Gemini (and any others wired into the `content_scripts.matches` allowlist). When you submit, it pulls your text out of the input, hands it to the local `guard` process over a loopback WebSocket, replaces it with the anonymized version, then submits. When the assistant's reply streams in, surrogates are auto-restored to real values in the rendered text — a `MutationObserver` driving the same pure `deanonymize` string-replace used by the CLI.
 
 It's **part of guard, not a parallel anonymizer**: the extension owns no model, no detector, and no vault. All of that lives in the existing engine — the extension is just another command source on the same bus, alongside the global hotkey. The vault is shared: a name anonymized via `Ctrl+Shift+A` in Notepad reuses its surrogate when you type it into chatgpt.com.
 

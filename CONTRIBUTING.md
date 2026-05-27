@@ -108,7 +108,7 @@ The extension intercepts outbound chat requests by URL pattern, not by site-spec
 
 1. In `extension/main_world.js`, add the chat-completion URL regex(es) to the `CHAT_PATTERNS` array near the top of the file. For ChatGPT-style sites that POST a JSON body with a `messages[]` array, that single regex is enough; the existing JSON walker handles the body.
 2. If the site uses a request shape that doesn't match the generic JSON-messages assumption (Gemini's `BardChatUi` form encoding is the existing example), add a site-specific extractor following the `isGemini` branch as a template.
-3. Add the host to `host_permissions` and to every `content_scripts.matches` array in `extension/manifest.json`.
+3. Add the host to every `content_scripts.matches` array (and the `web_accessible_resources.matches` entry) in `extension/manifest.json`. No `host_permissions` entry — static content scripts inject without one, and skipping `host_permissions` keeps the extension out of Chrome Web Store's "in-depth review" queue.
 4. Reload the unpacked extension.
 
 The model, the detector, the vault, and the restore logic are reused — your patch only owns "which URL is a chat request on this site, and how do I dig the user prompt out of its body."
