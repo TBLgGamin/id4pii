@@ -22,11 +22,19 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.tabs.create({ url }).catch(() => {});
 });
 
+const BADGE_STYLES = {
+  connected: { color: "#2EB88A" },
+  warning:   { color: "#F5A524" },
+  error:     { color: "#B83A2E" },
+};
+
 function setBadge(state) {
-  const text = state === "connected" ? "" : "!";
-  const color = state === "connected" ? "#2EB88A" : "#B83A2E";
-  chrome.action.setBadgeText({ text }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ color }).catch(() => {});
+  const style = BADGE_STYLES[state] || BADGE_STYLES.error;
+  chrome.action.setBadgeText({ text: "●" }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: style.color }).catch(() => {});
+  if (chrome.action.setBadgeTextColor) {
+    chrome.action.setBadgeTextColor({ color: style.color }).catch(() => {});
+  }
 }
 
 function scheduleReconnect() {
@@ -38,13 +46,17 @@ function scheduleReconnect() {
   backoff = Math.min(backoff * 2, RECONNECT_MAX_MS);
 }
 
+function disconnectedState() {
+  return backoff >= 8000 ? "error" : "warning";
+}
+
 function connect() {
   LOG.debug("bg", "connect-attempt", { backoff });
   try {
     socket = new WebSocket(BRIDGE_URL);
   } catch (err) {
     LOG.warn("bg", "connect-throw", { error: String(err) });
-    setBadge("disconnected");
+    setBadge(disconnectedState());
     scheduleReconnect();
     return;
   }
@@ -55,14 +67,14 @@ function connect() {
     safeSend({ type: "hello", host: "extension", tab_id: "" });
   });
   socket.addEventListener("close", () => {
-    setBadge("disconnected");
+    setBadge(disconnectedState());
     LOG.info("bg", "connect-close", { pending: pending.size });
     rejectAllPending("bridge disconnected");
     scheduleReconnect();
   });
   socket.addEventListener("error", (e) => {
     LOG.debug("bg", "connect-error", { type: e && e.type });
-    setBadge("disconnected");
+    setBadge(disconnectedState());
   });
   socket.addEventListener("message", (ev) => handleSocketMessage(ev.data));
 }
@@ -244,7 +256,7 @@ self.id4pii.clearVault = () => {
   return true;
 };
 
-setBadge("disconnected");
+setBadge("warning");
 connect();
 
 setInterval(() => {
