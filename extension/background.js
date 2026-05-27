@@ -1,4 +1,4 @@
-try { importScripts("logger.js"); } catch (_) {}
+try { importScripts("src/isolated/logger.js"); } catch (_) {}
 const LOG = (self.__id4pii_log) || {
   debug() {}, info(){}, warn(){}, error(){}, newReqId(){ return String(Date.now()); }, isDebug(){ return false; }
 };
@@ -18,7 +18,7 @@ LOG.info("bg", "boot");
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason !== "install") return;
-  const url = chrome.runtime.getURL("onboarding.html");
+  const url = chrome.runtime.getURL("onboarding/onboarding.html");
   chrome.tabs.create({ url }).catch(() => {});
 });
 

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>id4pii &mdash; finish setup</title>
+    <link rel="icon" href="../assets/icon-128.png" />
+    <link rel="stylesheet" href="onboarding.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="../assets/icon-128.png" alt="" />
+        <span class="name">id4pii</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="step split" data-step="install">
+        <div class="hero">
+          <span class="eyebrow">Step 1 of 2</span>
+          <h1>You&rsquo;re 30 seconds from privacy.</h1>
+          <p class="lede">
+            The extension is installed. One more piece &mdash; a tiny local engine that does the redacting on your machine. Nothing ever leaves.
+          </p>
+          <div class="actions">
+            <a id="download" class="btn primary" href="#">
+              <span>Download for Windows</span>
+              <svg class="btn-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 2v8m0 0l3-3m-3 3L5 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </a>
+            <button id="have-it" class="btn ghost" type="button">I already ran the installer</button>
+          </div>
+          <p class="micro-hint">After you click download, this tab will wait for the engine to come online and let you know.</p>
+        </div>
+      </section>
+
+      <section class="step hidden split" data-step="waiting">
+        <div class="hero">
+          <span class="eyebrow">Step 2 of 2</span>
+          <h1>Run <code>id4pii-setup.exe</code> when it lands.</h1>
+          <p class="lede">
+            The installer will fetch the model (~875 MB, one time) and start the engine. This page will advance on its own.
+          </p>
+
+          <div class="loader">
+            <div class="loader-track">
+              <div class="loader-bar"></div>
+            </div>
+            <div class="loader-meta">
+              <span>Waiting for the engine</span>
+              <span class="loader-dot">checking every couple of seconds</span>
+            </div>
+          </div>
+
+          <p class="micro-hint">
+            Stuck? <a id="back-to-install" href="#">Go back</a> or
+            <a href="https://github.com/TBLgGamin/id4pii/issues" target="_blank" rel="noopener">open an issue</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="step hidden" data-step="connected">
+        <div class="hero hero-center">
+          <h1>You&rsquo;re set.</h1>
+          <p class="lede">Pick a provider to get started.</p>
+
+          <div class="provider-grid" role="list">
+            <a class="provider-card" role="listitem" href="https://chatgpt.com" target="_blank" rel="noopener">
+              <span class="provider-logo">
+                <img src="../assets/providers/openai.svg" alt="" />
+              </span>
+              <span class="provider-name">ChatGPT</span>
+              <span class="provider-host">chatgpt.com</span>
+              <span class="provider-arrow" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path d="M5 3h8v8M13 3L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </a>
+            <a class="provider-card" role="listitem" href="https://claude.ai" target="_blank" rel="noopener">
+              <span class="provider-logo">
+                <img src="../assets/providers/anthropic.svg" alt="" />
+              </span>
+              <span class="provider-name">Claude</span>
+              <span class="provider-host">claude.ai</span>
+              <span class="provider-arrow" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path d="M5 3h8v8M13 3L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </a>
+            <a class="provider-card" role="listitem" href="https://gemini.google.com" target="_blank" rel="noopener">
+              <span class="provider-logo">
+                <img src="../assets/providers/gemini.svg" alt="" />
+              </span>
+              <span class="provider-name">Gemini</span>
+              <span class="provider-host">gemini.google.com</span>
+              <span class="provider-arrow" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path d="M5 3h8v8M13 3L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside id="carousel-slot" aria-hidden="true">
+      <div class="vcarousel-track">
+        <img src="../assets/promotional/chatgpt-pii.webp" alt="" />
+        <img src="../assets/promotional/claude-pii.webp" alt="" />
+        <img src="../assets/promotional/gemini-pii.webp" alt="" />
+        <img src="../assets/promotional/chatgpt-pii.webp" alt="" />
+        <img src="../assets/promotional/claude-pii.webp" alt="" />
+        <img src="../assets/promotional/gemini-pii.webp" alt="" />
+      </div>
+    </aside>
+
+    <canvas id="confetti" aria-hidden="true"></canvas>
+
+    <script src="confetti.browser.min.js"></script>
+    <script src="onboarding.js"></script>
+  </body>
+</html>

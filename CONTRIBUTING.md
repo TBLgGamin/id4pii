@@ -104,14 +104,14 @@ Output: `dist\id4pii-extension-v<version>.zip`. This is the artifact you'd uploa
 
 ## Adding a new chat site
 
-The extension intercepts outbound chat requests by URL pattern, not by site-specific DOM adapters. To add a new site:
+The extension uses one adapter per site under `extension/src/adapters/`. Each adapter registers a host regex list, a chat-URL pattern list, and a body anonymizer. To add a new site:
 
-1. In `extension/main_world.js`, add the chat-completion URL regex(es) to the `CHAT_PATTERNS` array near the top of the file. For ChatGPT-style sites that POST a JSON body with a `messages[]` array, that single regex is enough; the existing JSON walker handles the body.
-2. If the site uses a request shape that doesn't match the generic JSON-messages assumption (Gemini's `BardChatUi` form encoding is the existing example), add a site-specific extractor following the `isGemini` branch as a template.
-3. Add the host to every `content_scripts.matches` array (and the `web_accessible_resources.matches` entry) in `extension/manifest.json`. No `host_permissions` entry — static content scripts inject without one, and skipping `host_permissions` keeps the extension out of Chrome Web Store's "in-depth review" queue.
+1. Copy `extension/src/adapters/chatgpt.js` to `extension/src/adapters/<site>.js`. Update `name`, `hosts` (regexes matched against `location.hostname`), and `chatPatterns` (regexes matched against outbound request URLs). For ChatGPT-style sites that POST a JSON body with a `messages[]` array, the default `core.helpers.anonymizeJsonBody` handles it — no further work needed.
+2. If the site uses a request shape that doesn't match the generic JSON-messages assumption (Gemini's `BardChatUi` form encoding is the existing example in `extension/src/adapters/gemini.js`), write a custom `anonymizeBody(core, reqId, rawBody)` and set `wrapsResponse: false` if the response shouldn't be streamed through the restore transformer.
+3. Add the new adapter script to the MAIN-world `js` array in `extension/manifest.json` (before `src/main/boot.js`), and add the host to every `content_scripts.matches` array plus the `web_accessible_resources.matches` entry. No `host_permissions` entry — static content scripts inject without one, and skipping `host_permissions` keeps the extension out of Chrome Web Store's "in-depth review" queue.
 4. Reload the unpacked extension.
 
-The model, the detector, the vault, and the restore logic are reused — your patch only owns "which URL is a chat request on this site, and how do I dig the user prompt out of its body."
+The model, the detector, the vault, the response-restore stream, and the DOM mutation observer are all owned by `core.js` and reused — your adapter only owns "which host am I, which URLs are chat requests on this site, and how do I dig the user prompt out of the body."
 
 ## Code style
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "id4pii guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local PII anonymization for ChatGPT, Claude, and Gemini. Swaps real names and emails for stand-ins before the request goes out.",
   "permissions": ["storage"],
   "background": {
@@ -16,7 +16,11 @@
         "*://*.claude.ai/*",
         "*://gemini.google.com/*"
       ],
-      "js": ["logger.js", "ui.js", "content.js"],
+      "js": [
+        "src/isolated/logger.js",
+        "src/isolated/ui.js",
+        "src/isolated/content.js"
+      ],
       "world": "ISOLATED",
       "run_at": "document_start",
       "all_frames": false
@@ -29,7 +33,14 @@
         "*://*.claude.ai/*",
         "*://gemini.google.com/*"
       ],
-      "js": ["logger_main.js", "main_world.js"],
+      "js": [
+        "src/main/logger.js",
+        "src/main/core.js",
+        "src/adapters/chatgpt.js",
+        "src/adapters/claude.js",
+        "src/adapters/gemini.js",
+        "src/main/boot.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start",
       "all_frames": false

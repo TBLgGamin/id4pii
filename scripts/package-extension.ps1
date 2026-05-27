@@ -22,7 +22,7 @@ if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 Copy-Item -Recurse "$src\*" $staging -Force
 
-$onboarding = Join-Path $staging "onboarding.js"
+$onboarding = Join-Path $staging "onboarding\onboarding.js"
 $content = Get-Content -Raw -LiteralPath $onboarding
 $content = $content.Replace('__ID4PII_INSTALLER_URL__', $installerUrl)
 Set-Content -LiteralPath $onboarding -Value $content -Encoding utf8

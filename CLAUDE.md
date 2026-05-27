@@ -145,7 +145,7 @@ Production users install the extension from the Chrome Web Store and the engine 
 ### Failure modes
 
 - Bridge down → submit interception fails open (passes through with a `console.warn`), so you never get stuck unable to send.
-- Site interception is keyed on outbound chat-completion URLs matched against `CHAT_PATTERNS` in `extension/main_world.js`. When a site reorganizes its API path, the regex needs to be updated. Gemini's form-encoded `BardChatUi` body has its own extractor branch alongside the generic JSON-messages walker.
+- Site interception is keyed on outbound chat-completion URLs matched against each adapter's `chatPatterns` array. One adapter per site lives in `extension/src/adapters/` (`chatgpt.js`, `claude.js`, `gemini.js`); the shared core in `extension/src/main/core.js` owns fetch/XHR patching, response streaming, vault IPC, and DOM restore. ChatGPT and Claude reuse `core.helpers.anonymizeJsonBody` (generic JSON walker); Gemini owns its own `f.req` form-encoded extractor. To add a new site: drop a new file in `extension/src/adapters/`, register it via `window.__id4pii_main.registerAdapter(...)`, and add the script + host match to `manifest.json`.
 
 ### Debugging
 
