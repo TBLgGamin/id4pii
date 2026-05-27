@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Materialize .env from secrets
+        shell: pwsh
+        env:
+          EXT_ID:        ${{ secrets.ID4PII_PUBLISHED_EXTENSION_ID }}
+          INSTALLER_URL: ${{ secrets.ID4PII_INSTALLER_URL }}
+          SIGNTOOL:      ${{ secrets.ID4PII_INSTALLER_SIGNTOOL }}
+          SIGN_UN:       ${{ secrets.ID4PII_INSTALLER_SIGN_UNINSTALLER }}
+          REPO_SLUG:     ${{ github.repository }}
+        run: |
+          $url = if ($env:INSTALLER_URL) { $env:INSTALLER_URL } else {
+            "https://github.com/$($env:REPO_SLUG)/releases/latest/download/id4pii-setup.exe"
+          }
+          $signUn = if ($env:SIGN_UN) { $env:SIGN_UN } else { 'no' }
+          @(
+            "ID4PII_PUBLISHED_EXTENSION_ID=$($env:EXT_ID)",
+            "ID4PII_INSTALLER_URL=$url",
+            "ID4PII_APP_VERSION=${{ steps.version.outputs.version }}",
+            "ID4PII_INSTALLER_SIGNTOOL=$($env:SIGNTOOL)",
+            "ID4PII_INSTALLER_SIGN_UNINSTALLER=$signUn",
+            "ID4PII_GITHUB_REPO=$($env:REPO_SLUG)"
+          ) | Set-Content -Encoding utf8 -Path .env
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install -y innosetup --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: .\scripts\build-installer.ps1
+
+      - name: Package extension
+        shell: pwsh
+        run: .\scripts\package-extension.ps1
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: installer/dist/id4pii-setup.exe
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: dist/id4pii-extension-v${{ steps.version.outputs.version }}.zip
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: ./artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-zip
+          path: ./artifacts
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            ./artifacts/id4pii-setup.exe \
+            ./artifacts/id4pii-extension-v${{ needs.build-windows.outputs.version }}.zip
