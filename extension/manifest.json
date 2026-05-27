@@ -3,7 +3,7 @@
   "name": "id4pii guard",
   "version": "0.1.0",
   "description": "Local PII anonymization for ChatGPT, Claude, Gemini and other LLM sites. Talks to id4pii guard running on your machine; no data leaves the host.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": [
     "*://chatgpt.com/*",
     "*://*.openai.com/*",

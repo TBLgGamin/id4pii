@@ -16,6 +16,12 @@ const pending = new Map();
 
 LOG.info("bg", "boot");
 
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== "install") return;
+  const url = chrome.runtime.getURL("onboarding.html");
+  chrome.tabs.create({ url }).catch(() => {});
+});
+
 function setBadge(state) {
   const text = state === "connected" ? "" : "!";
   const color = state === "connected" ? "#2EB88A" : "#B83A2E";

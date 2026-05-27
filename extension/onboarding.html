@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>id4pii — finish setup</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1115;
+        --fg: #e8eaf0;
+        --muted: #9aa3b2;
+        --accent: #2eb88a;
+        --bad: #b83a2e;
+        --card: #181b22;
+        --border: #2a2f3a;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        min-height: 100vh;
+      }
+      main {
+        max-width: 640px;
+        margin: 80px auto;
+        padding: 0 24px;
+      }
+      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; }
+      .brand img { width: 36px; height: 36px; }
+      .brand h1 { margin: 0; font-size: 20px; font-weight: 600; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 28px;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 16px;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+      .dot.ok { background: var(--accent); }
+      .dot.bad { background: var(--bad); }
+      .dot.pending { background: var(--muted); animation: pulse 1.2s infinite; }
+      @keyframes pulse { 0%,100% { opacity: 0.4 } 50% { opacity: 1 } }
+      h2 { margin: 0 0 12px; font-size: 22px; font-weight: 600; }
+      p { color: var(--muted); line-height: 1.55; margin: 0 0 16px; }
+      .btn {
+        display: inline-block;
+        padding: 12px 20px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #0a0d12;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .btn:hover { filter: brightness(1.08); }
+      .muted-btn {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      code {
+        background: rgba(255,255,255,0.05);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .steps { margin-top: 20px; font-size: 13px; color: var(--muted); }
+      .steps ol { padding-left: 18px; margin: 0; }
+      .steps li { margin: 6px 0; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <img src="assets/icon-48.png" alt="" />
+        <h1>id4pii guard</h1>
+      </div>
+
+      <div class="card" id="checking">
+        <div class="status"><span class="dot pending"></span><span>Checking for the local engine…</span></div>
+        <h2>Hold on a second</h2>
+        <p>The extension is installed. Now we're looking for the id4pii engine on this machine — it does the actual PII detection. Nothing is sent anywhere; the check is purely a loopback connection to your own computer.</p>
+      </div>
+
+      <div class="card hidden" id="missing">
+        <div class="status"><span class="dot bad"></span><span>Engine not detected</span></div>
+        <h2>One more thing — install the engine</h2>
+        <p>The extension on its own can't do anything. It hands text to a tiny local app (<code>id4pii guard</code>) that owns the PII model. Download and run the installer below; it sets up the engine, downloads the model, and turns on auto-start so this never has to happen again.</p>
+        <p>
+          <a id="download" class="btn" href="#">Download id4pii for Windows</a>
+        </p>
+        <div class="steps">
+          <ol>
+            <li>Run the downloaded <code>id4pii-setup.exe</code>.</li>
+            <li>The installer downloads the model (~875 MB) and registers auto-start.</li>
+            <li>Come back to this tab — it will switch to "connected" once the engine is up.</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="card hidden" id="connected">
+        <div class="status"><span class="dot ok"></span><span>Engine connected</span></div>
+        <h2>You're set</h2>
+        <p>Open ChatGPT, Claude, or Gemini and type something with a name or email in it. When you submit, the extension swaps real PII for fictional surrogates before the request goes out, and restores the real values in the reply.</p>
+        <p>
+          <a class="btn" href="https://chatgpt.com" target="_blank" rel="noopener">Open ChatGPT</a>
+          <a class="btn muted-btn" href="#" id="close-tab">Close this tab</a>
+        </p>
+      </div>
+    </main>
+    <script src="onboarding.js"></script>
+  </body>
+</html>
