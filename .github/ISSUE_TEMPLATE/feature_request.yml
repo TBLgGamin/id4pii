@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a capability, integration, or change you'd like to see.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Start from the user need, not the technical change. What are you trying to do that the current id4pii makes hard or impossible?
+      placeholder: 'I use Perplexity all the time and want id4pii to swap PII there too, the same way it does on ChatGPT.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would the feature look like?
+      description: Rough sketch of the desired behavior. UI mocks, CLI flags, manifest additions — whatever you have in mind. Vague is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: 'Other approaches you weighed, or workarounds that almost suffice. Helps avoid going in circles.'
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where would this live?
+      multiple: true
+      options:
+        - Chrome extension
+        - id4pii-guard tray app
+        - id4pii CLI / HTTP server
+        - Installer / packaging
+        - Documentation
+        - 'Not sure'
+    validations:
+      required: true
+
+  - type: textarea
+    id: other
+    attributes:
+      label: Anything else?

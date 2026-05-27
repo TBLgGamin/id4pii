@@ -1,0 +1,97 @@
+name: Bug report
+description: Something is broken or not behaving as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in as much as you can — the more concrete the report, the faster it gets fixed.
+
+        **Don't paste real PII or message bodies into this form.** id4pii's whole point is to keep that data on your machine; the same applies here. If you need to share an example, use fictional names and emails.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: One or two sentences describing the bug.
+      placeholder: 'Submitting on chatgpt.com triggered the lock animation but the prompt was sent unredacted.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence of actions. Number them.
+      placeholder: |
+        1. Open chatgpt.com.
+        2. Type a fictional sentence: "I'm Sarah Connor, sarah@skynet.com".
+        3. Press Enter.
+        4. Inspect the request body in DevTools → Network.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened?
+    validations:
+      required: true
+
+  - type: input
+    id: id4pii-version
+    attributes:
+      label: id4pii version
+      description: Run `id4pii.exe --version` from a terminal, or check Add/Remove Programs.
+      placeholder: '0.1.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does the bug show up?
+      multiple: true
+      options:
+        - Chrome extension (toolbar, onboarding, content-script behavior)
+        - id4pii-guard tray app (hotkeys, log, tray menu)
+        - id4pii CLI (scan / anonymize / install / doctor)
+        - Installer / uninstaller
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: 'Settings → System → About — the "Version" line. (e.g. Windows 11 24H2)'
+      placeholder: 'Windows 11 24H2'
+    validations:
+      required: true
+
+  - type: input
+    id: chrome
+    attributes:
+      label: Chrome / browser version (if applicable)
+      description: 'chrome://version → Google Chrome line'
+      placeholder: '142.0.7339.81'
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: '`id4pii doctor` output (if installed)'
+      description: 'Run `id4pii.exe doctor` and paste the JSON output here.'
+      render: json
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: 'Tray → Open log file. Copy the last ~30 lines from when the bug happened. Lines are already PII-free.'
+      render: shell
+
+  - type: textarea
+    id: other
+    attributes:
+      label: Anything else?
+      description: 'Screenshots, related issues, hypotheses — anything that helps.'

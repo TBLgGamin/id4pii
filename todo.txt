@@ -1,0 +1,92 @@
+id4pii — outstanding work toward a fully-ready 1.0
+====================================================
+
+In-flight (you've already started):
+  [~] Chrome Web Store review in progress — nothing to do but wait
+  [~] First release tagged + workflow run (v0.1.0) — verify it succeeded
+      and that the artifacts attached to https://github.com/TBLgGamin/id4pii/releases/tag/v0.1.0
+
+Done this session:
+  [x] Made repo public, set repo secrets from .env
+  [x] Tagged v0.1.0, release workflow invoked
+  [x] Privacy policy hosted on GitHub Pages
+        docs/privacy.md  -> https://tblggamin.github.io/id4pii/privacy
+        docs/index.md    -> https://tblggamin.github.io/id4pii/
+        First Pages build kicks off automatically after the next push.
+        Paste the privacy URL into the Chrome Web Store listing form.
+  [x] GitHub issue + PR templates
+        .github/ISSUE_TEMPLATE/bug_report.yml
+        .github/ISSUE_TEMPLATE/feature_request.yml
+        .github/ISSUE_TEMPLATE/config.yml (no blank issues; routes to
+          security advisories and discussions)
+        .github/PULL_REQUEST_TEMPLATE.md
+  [x] SECURITY.md with private vulnerability reporting policy
+  [x] Repo "About": description, homepage, 12 topics
+  [x] GitHub Discussions enabled (issue config.yml links to them)
+
+Blockers before promoting v1.0 publicly
+----------------------------------------
+  [ ] Code signing cert
+      - Free path: SignPath Foundation (OSS program). Apply at
+          https://signpath.org/apply
+        Requires the project be genuine MIT/Apache OSS - id4pii qualifies.
+      - Cheap paid: Azure Trusted Signing ~$10/month, no hardware token.
+      - Traditional: EV cert (~$300-600/yr) from SSL.com / Sectigo for
+        zero-warning SmartScreen from day one.
+      - After provisioning, set repo secret:
+          ID4PII_INSTALLER_SIGNTOOL = signtool sign /fd SHA256 /tr <ts-url> /td SHA256 $f
+        and re-cut release. .iss + release.yml already wired.
+
+  [ ] When Web Store approves:
+      - Note the public listing URL: chromewebstore.google.com/detail/<slug>/<id>
+      - Replace the placeholder "Add to Chrome" link in README.md (line
+        ~17, currently the bare chromewebstore.google.com root) with
+        the real listing URL.
+
+  [ ] Test the v0.1.0 installer on a clean Windows VM
+      - Fresh Win11, no dev tools, no Rust toolchain.
+      - Verify the SmartScreen path (unsigned today), the Start Menu
+        group, the desktop shortcut Task, the post-install model
+        download, auto-start on next login, the tray icon with the
+        live status dot, and right-click -> Open log file.
+      - Verify uninstall actually removes %LOCALAPPDATA%\id4pii\.
+
+Strongly recommended for a polished launch
+-------------------------------------------
+  [ ] Web Store store listing assets (beyond the 3 screenshots)
+      - Small promo tile: 440x280 PNG/JPG, no alpha
+      - (Optional) Marquee promo tile: 1400x560
+      - (Optional) Long description, FAQ, support email
+      - Pick a category: "Productivity" probably fits best
+      - Single-purpose description and permission justifications are
+        already written (see chat history)
+      - Privacy policy URL is now ready:
+          https://tblggamin.github.io/id4pii/privacy
+
+  [ ] Adapter refactor - split per-site logic out of main_world.js
+      - One adapter per site (chatgpt, claude, gemini). Document handling
+        is going to make the current if/else chain unmanageable.
+
+Nice-to-have / future
+----------------------
+  [ ] CHANGELOG.md
+      - Keep-a-Changelog format. Start with v0.1.0 covering commits
+        0bb2869..dbe94ef.
+
+  [ ] Automated Web Store publish from CI
+      - Generate a Web Store API key (Cloud Console -> OAuth client).
+      - Add steps to release.yml that POST the new .zip after the
+        GitHub release is made. Saves the manual dashboard upload step.
+
+  [ ] macOS / Linux guard
+      - macOS AX API, Linux AT-SPI. Module is already cfg(windows)-gated.
+      - The non-trivial pieces are clipboard fallback and global hotkeys
+        on each platform.
+
+  [ ] Real in-tray log viewer (instead of "Open log file" -> Notepad)
+      - Small webview window that tails the rolling log live.
+
+Existing notes (kept)
+---------------------
+  split up the handling into 3 adapters one for chatgpt gemini and claude
+  cause with documents handling it will be a whole lot of if's else yknow
