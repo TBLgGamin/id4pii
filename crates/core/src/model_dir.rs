@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use crate::paths;
+
 pub const DEFAULT_MODEL_FILE: &str = "onnx/model_q4.onnx";
 pub const DEFAULT_MODEL_DATA: &str = "onnx/model_q4.onnx_data";
 pub const DEFAULT_CONFIG: &str = "config.json";
 
 #[must_use]
 pub fn default_dir() -> PathBuf {
-    if let Some(dir) = data_dir()
+    if let Some(dir) = paths::model_dir()
         && dir.join(DEFAULT_CONFIG).exists()
     {
         return dir;
@@ -15,7 +17,7 @@ pub fn default_dir() -> PathBuf {
     if legacy.join(DEFAULT_CONFIG).exists() {
         return legacy;
     }
-    data_dir().unwrap_or(legacy)
+    paths::model_dir().unwrap_or(legacy)
 }
 
 #[must_use]
@@ -30,17 +32,4 @@ pub fn is_complete(dir: &Path, model_file: &str) -> bool {
         return false;
     }
     true
-}
-
-fn data_dir() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-    }?;
-    Some(base.join("id4pii").join("model"))
 }

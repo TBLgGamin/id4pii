@@ -12,7 +12,7 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "id4pii";
 const CHROME_UPDATE_URL: &str = "https://clients2.google.com/service/update2/crx";
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 pub(crate) struct InstallArgs {
     #[arg(long, default_value_t = true)]
     with_model: bool,
@@ -28,7 +28,7 @@ pub(crate) struct InstallArgs {
     exe_path: Option<PathBuf>,
 }
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 pub(crate) struct UninstallArgs {
     #[arg(long)]
     keep_model: bool,
@@ -36,7 +36,7 @@ pub(crate) struct UninstallArgs {
     extension_id: Option<String>,
 }
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 pub(crate) struct DoctorArgs {
     #[arg(long)]
     extension_id: Option<String>,
@@ -57,7 +57,7 @@ pub(crate) fn run_install(args: &InstallArgs) -> Result<()> {
         eprintln!("id4pii: registered Chrome extension {id} for next launch.");
     }
     if args.autostart {
-        let exe = resolve_exe(args.exe_path.as_ref())?;
+        let exe = resolve_guard_exe(args.exe_path.as_ref())?;
         register_autostart(&exe)?;
         eprintln!("id4pii: autostart registered at {RUN_KEY}\\{RUN_VALUE}.");
     }
@@ -91,8 +91,8 @@ pub(crate) fn run_uninstall(args: &UninstallArgs) -> Result<()> {
 
 fn id4pii_data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-        dirs.push(PathBuf::from(base).join("id4pii"));
+    if let Some(root) = id4pii_core::paths::data_root() {
+        dirs.push(root);
     }
     let legacy = PathBuf::from("model");
     if legacy.join(model_dir::DEFAULT_CONFIG).exists() {
@@ -147,7 +147,7 @@ fn deregister_chrome_extension(extension_id: &str) -> Result<()> {
 }
 
 fn register_autostart(exe: &std::path::Path) -> Result<()> {
-    let value = format!("\"{}\" guard", exe.display());
+    let value = format!("\"{}\"", exe.display());
     reg_add(HKCU, RUN_KEY, RUN_VALUE, "REG_SZ", &value)
 }
 
@@ -155,11 +155,13 @@ fn remove_autostart() {
     let _ = reg_delete_value(HKCU, RUN_KEY, RUN_VALUE);
 }
 
-fn resolve_exe(provided: Option<&PathBuf>) -> Result<PathBuf> {
+fn resolve_guard_exe(provided: Option<&PathBuf>) -> Result<PathBuf> {
     if let Some(path) = provided {
         return Ok(path.clone());
     }
-    std::env::current_exe().context("resolve current_exe for autostart")
+    let here = std::env::current_exe().context("resolve current_exe")?;
+    let dir = here.parent().context("current_exe has no parent")?;
+    Ok(dir.join("id4pii-guard.exe"))
 }
 
 fn reg_add(root: &str, key: &str, value: &str, kind: &str, data: &str) -> Result<()> {

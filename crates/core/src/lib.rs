@@ -12,6 +12,7 @@ mod error;
 mod labels;
 pub mod model_dir;
 pub mod model_fetch;
+pub mod paths;
 mod redact;
 
 pub use anonymize::{

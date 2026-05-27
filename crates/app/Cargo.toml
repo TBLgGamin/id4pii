@@ -6,9 +6,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "id4pii_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "id4pii"
 path = "src/main.rs"
+
+[[bin]]
+name = "id4pii-guard"
+path = "src/bin/id4pii_guard.rs"
 
 [dependencies]
 id4pii-core.workspace = true
@@ -16,6 +24,7 @@ tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 clap.workspace = true
 axum = { workspace = true, features = ["ws"] }
 serde = { workspace = true }
@@ -33,7 +42,6 @@ enigo.workspace = true
 tiny-skia.workspace = true
 windows.workspace = true
 include_dir.workspace = true
-dirs.workspace = true
 
 [lints]
 workspace = true

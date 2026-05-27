@@ -58,10 +58,12 @@ impl DpapiStore {
     }
 
     pub(crate) fn default_path() -> Result<PathBuf> {
-        let base = dirs::data_local_dir().context("could not resolve %LOCALAPPDATA%")?;
-        let dir = base.join("id4pii");
-        fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-        Ok(dir.join("vault.bin"))
+        let path = id4pii_core::paths::vault_file().context("could not resolve %LOCALAPPDATA%")?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        Ok(path)
     }
 }
 
