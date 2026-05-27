@@ -40,7 +40,30 @@ fn main() {
         });
         println!("cargo:rustc-env={key}={value}");
     }
+
+    embed_windows_icon(&root);
 }
+
+#[cfg(windows)]
+fn embed_windows_icon(root: &Path) {
+    let icon = root.join("assets").join("icon.ico");
+    println!("cargo:rerun-if-changed={}", icon.display());
+    if !icon.exists() {
+        println!(
+            "cargo:warning=icon.ico not found at {} — skipping Win32 icon resource embed",
+            icon.display()
+        );
+        return;
+    }
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(icon.to_string_lossy().as_ref());
+    if let Err(err) = res.compile() {
+        println!("cargo:warning=embedding icon resource failed: {err}");
+    }
+}
+
+#[cfg(not(windows))]
+fn embed_windows_icon(_root: &Path) {}
 
 fn fail(msg: &str) -> ! {
     for line in msg.lines() {
