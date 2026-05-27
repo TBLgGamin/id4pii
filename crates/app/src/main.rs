@@ -7,6 +7,7 @@
 
 #[cfg(windows)]
 mod guard;
+mod progress;
 mod serve;
 
 use std::io::Read;
@@ -129,6 +130,7 @@ async fn main() -> Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,ort=warn")),
         )
+        .with_writer(progress::AdaptiveWriter)
         .init();
 
     match Cli::parse().command {

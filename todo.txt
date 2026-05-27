@@ -1,0 +1,4 @@
+bundle model weights
+make logo
+make exe installable easily that then can also download extension foir you
+make extension standalone downloadable

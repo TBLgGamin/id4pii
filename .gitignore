@@ -4,3 +4,5 @@
 *.pdb
 .env
 .DS_Store
+/scripts/node_modules*
+/extension/assets/

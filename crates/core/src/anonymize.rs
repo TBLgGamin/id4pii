@@ -1,7 +1,53 @@
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 
 use crate::detector::PiiSpan;
 use crate::labels::Category;
+
+const FORENAMES_TSV: &str = include_str!("../assets/forenames.tsv");
+const SURNAMES_TSV: &str = include_str!("../assets/surnames.tsv");
+
+struct NamePool {
+    names: Vec<&'static str>,
+    #[allow(dead_code)] // reserved for future locale-aware filtering
+    countries: Vec<&'static str>,
+}
+
+static FORENAMES_POOL: OnceLock<NamePool> = OnceLock::new();
+static SURNAMES_POOL: OnceLock<NamePool> = OnceLock::new();
+
+fn parse_pool(text: &'static str) -> NamePool {
+    let mut names = Vec::with_capacity(2200);
+    let mut countries = Vec::with_capacity(2200);
+    for line in text.lines() {
+        if let Some((country, name)) = line.split_once('\t') {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            countries.push(country);
+            names.push(name);
+        }
+    }
+    NamePool { names, countries }
+}
+
+fn forenames() -> &'static NamePool {
+    FORENAMES_POOL.get_or_init(|| parse_pool(FORENAMES_TSV))
+}
+
+fn surnames() -> &'static NamePool {
+    SURNAMES_POOL.get_or_init(|| parse_pool(SURNAMES_TSV))
+}
+
+/// Eagerly parse the embedded name pools. Safe to call from any thread, idempotent. Useful
+/// from a background warm-up thread at app startup so the first anonymize doesn't pay the
+/// ~few-ms parse cost on the user-facing path.
+pub fn warm_up_pools() {
+    let _ = forenames();
+    let _ = surnames();
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultEntry {
@@ -86,130 +132,6 @@ impl Rng {
     }
 }
 
-const FIRST_NAMES: &[&str] = &[
-    "Ada",
-    "Alan",
-    "Grace",
-    "Linus",
-    "Frodo",
-    "Bilbo",
-    "Samwise",
-    "Aragorn",
-    "Gandalf",
-    "Arwen",
-    "Galadriel",
-    "Ellen",
-    "Sarah",
-    "Trinity",
-    "Hari",
-    "Paul",
-    "Leia",
-    "Spock",
-    "Hermione",
-    "Ripley",
-    "Morpheus",
-    "Dana",
-    "Fox",
-    "Marty",
-    "Cory",
-    "Kara",
-    "Wesley",
-    "Bjarne",
-    "Margaret",
-    "Radia",
-    "Donald",
-    "Barbara",
-    "Edsger",
-    "Niklaus",
-    "Tony",
-    "Bruce",
-    "Clark",
-    "Diana",
-    "Peter",
-    "Wanda",
-    "Arthur",
-    "Merlin",
-    "Geralt",
-    "Yennefer",
-    "Ciri",
-    "Ezio",
-    "Lara",
-    "Gordon",
-    "Chell",
-    "Samus",
-    "Cloud",
-    "Tifa",
-    "Aerith",
-    "Zelda",
-    "Mario",
-    "Luigi",
-    "Daenerys",
-    "Tyrion",
-    "Jon",
-    "Eowyn",
-];
-
-const LAST_NAMES: &[&str] = &[
-    "Lovelace",
-    "Turing",
-    "Hopper",
-    "Torvalds",
-    "Baggins",
-    "Gamgee",
-    "Skywalker",
-    "Organa",
-    "Atreides",
-    "Seldon",
-    "Connor",
-    "Anderson",
-    "Picard",
-    "Hofstadter",
-    "Granger",
-    "Weasley",
-    "Vetinari",
-    "Nakamoto",
-    "Gygax",
-    "Carmack",
-    "Stark",
-    "Tyrell",
-    "Deckard",
-    "Perlman",
-    "Liskov",
-    "Knuth",
-    "Wirth",
-    "Ritchie",
-    "Thompson",
-    "Kernighan",
-    "Dijkstra",
-    "Wozniak",
-    "Banner",
-    "Parker",
-    "Romanoff",
-    "Targaryen",
-    "Lannister",
-    "Snow",
-    "Pendragon",
-    "Greyjoy",
-    "Wayne",
-    "Kent",
-    "Prince",
-    "Croft",
-    "Freeman",
-    "Aran",
-    "Strife",
-    "Lockhart",
-    "Gainsborough",
-    "Valentine",
-    "Cousland",
-    "Hawke",
-    "Shepard",
-    "Vance",
-    "Sterling",
-    "Holmes",
-    "Watson",
-    "Moriarty",
-];
-
 const STREET_NAMES: &[&str] = &[
     "Baker",
     "Evergreen",
@@ -258,7 +180,15 @@ const STREET_TYPES: &[&str] = &[
     "Place",
 ];
 
-const DOMAINS: &[&str] = &["example.com", "example.org", "example.net"];
+const DOMAINS: &[&str] = &[
+    "gmail.com",
+    "outlook.com",
+    "hotmail.com",
+    "yahoo.com",
+    "icloud.com",
+    "live.com",
+    "proton.me",
+];
 
 const URL_WORDS: &[&str] = &[
     "holodeck",
@@ -296,10 +226,25 @@ pub fn anonymize(text: &str, spans: &[PiiSpan], rng: &mut Rng) -> (String, Vault
 
 #[must_use]
 pub fn anonymize_into(text: &str, spans: &[PiiSpan], rng: &mut Rng, vault: &mut Vault) -> String {
+    let (result, _) = anonymize_with_subs(text, spans, rng, vault);
+    result
+}
+
+/// Like [`anonymize_into`], but also returns the list of `(real, fake)` substitutions in
+/// document order. Useful when the caller wants to apply per-substring edits to a rich-text
+/// surface (preserving formatting) instead of overwriting the whole text.
+#[must_use]
+pub fn anonymize_with_subs(
+    text: &str,
+    spans: &[PiiSpan],
+    rng: &mut Rng,
+    vault: &mut Vault,
+) -> (String, Vec<(String, String)>) {
     let mut ordered: Vec<&PiiSpan> = spans.iter().collect();
     ordered.sort_by_key(|span| span.start);
 
     let mut result = String::with_capacity(text.len());
+    let mut subs: Vec<(String, String)> = Vec::new();
     let mut cursor = 0;
     for span in ordered {
         if span.start < cursor || span.end > text.len() || span.start > span.end {
@@ -310,12 +255,13 @@ pub fn anonymize_into(text: &str, spans: &[PiiSpan], rng: &mut Rng, vault: &mut 
         }
         let fake = vault.surrogate_for(span.category, &span.text, rng);
         result.push_str(&fake);
+        subs.push((span.text.clone(), fake));
         cursor = span.end;
     }
     if let Some(rest) = text.get(cursor..) {
         result.push_str(rest);
     }
-    result
+    (result, subs)
 }
 
 #[must_use]
@@ -365,21 +311,35 @@ fn unique_fake(category: Category, rng: &mut Rng, vault: &Vault) -> String {
     candidate
 }
 
+fn sanitize_local_part(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
+}
+
 fn generate_fake(category: Category, rng: &mut Rng) -> String {
     match category {
         Category::PrivatePerson => {
-            format!("{} {}", rng.pick(FIRST_NAMES), rng.pick(LAST_NAMES))
+            let f = forenames();
+            let s = surnames();
+            let fi = rng.below(f.names.len() as u64) as usize;
+            let si = rng.below(s.names.len() as u64) as usize;
+            format!("{} {}", f.names[fi], s.names[si])
         }
         Category::PrivateEmail => {
-            let first = rng.pick(FIRST_NAMES).to_lowercase();
-            let last = rng.pick(LAST_NAMES).to_lowercase();
-            format!("{first}.{last}@{}", rng.pick(DOMAINS))
+            let f = forenames();
+            let s = surnames();
+            let first = sanitize_local_part(f.names[rng.below(f.names.len() as u64) as usize]);
+            let last = sanitize_local_part(s.names[rng.below(s.names.len() as u64) as usize]);
+            let suffix = rng.below(100);
+            format!("{first}.{last}{suffix:02}@{}", rng.pick(DOMAINS))
         }
         Category::PrivatePhone => {
-            let mut number = String::from("555-01");
-            number.push(rng.digit());
-            number.push(rng.digit());
-            number
+            let area = 200 + rng.below(800);
+            let exchange = 200 + rng.below(800);
+            let line = rng.below(10_000);
+            format!("({area:03}) {exchange:03}-{line:04}")
         }
         Category::PrivateAddress => {
             let number = 1 + rng.below(9899);

@@ -140,6 +140,98 @@ subcommand is Windows only (macOS AX API and Linux AT-SPI are future work); the
 module is `cfg(windows)`-gated, so the workspace still builds on other
 platforms — only the subcommand is absent there.
 
+## Browser extension
+
+The MV3 extension in `extension/` is `id4pii guard` for LLM sites: ChatGPT,
+Claude, Gemini (and any others wired into the host allowlist). When you submit,
+it pulls your text out of the input, hands it to the local `guard` process over
+a loopback WebSocket, replaces it with the anonymized version, then submits.
+When the assistant's reply streams in, surrogates are auto-restored to real
+values in the rendered text — a `MutationObserver` driving the same pure
+`deanonymize` string-replace used by the CLI.
+
+It's **part of guard, not a parallel anonymizer**: the extension owns no
+model, no detector, and no vault. All of that lives in the existing engine —
+the extension is just another command source on the same bus, alongside the
+global hotkey. The vault is shared: a name anonymized via `Ctrl+Shift+A` in
+Notepad reuses its surrogate when you type it into chatgpt.com.
+
+The extension shares its assets with the desktop guard: the toolbar icon,
+extension icons, and the lock-close/lock-open animation frames all live in
+the repo-root `assets/` directory. A small sync script copies them into
+`extension/assets/` (which is gitignored, treated as a build artifact):
+
+```powershell
+.\scripts\sync-extension-assets.ps1
+```
+
+Run it whenever `assets/icon-*.png` or `assets/lock_frames/*.png` change.
+After running it once, the extension can be loaded unpacked from
+`extension/`.
+
+### Setup
+
+1. Run `id4pii guard` — the bridge listens on `ws://127.0.0.1:7878/ws` by
+   default. Disable with `--no-bridge`, change the port with
+   `--bridge-port <n>` (must match `BRIDGE_URL` in `extension/background.js`
+   if you customize it).
+2. In Chrome: `chrome://extensions` → **Developer mode** → **Load unpacked**
+   → select the `extension/` directory.
+3. The toolbar icon shows a solid green badge when connected, `!` when the
+   bridge is unreachable.
+
+### Triggers
+
+- **On submit** (Enter or send-button click) on a whitelisted host: the
+  extension intercepts, anonymizes via guard, then re-fires the submit with
+  the anonymized text. Same lock-close animation as the desktop guard.
+- **`Ctrl+Shift+A`** in any input on a whitelisted host: anonymize the input
+  in place without submitting, so you can review.
+- **Auto-restore**: as the assistant streams text into the page,
+  surrogates in plain text nodes are swapped back. Code blocks (`<code>`,
+  `<pre>`) are skipped to keep copy-paste intact.
+
+### Failure modes
+
+- Bridge down → submit interception fails open (passes through with a
+  `console.warn`), so you never get stuck unable to send.
+- Per-site adapters target the current ChatGPT / Claude / Gemini DOMs. They
+  use multiple selector fallbacks but will need updates when those sites
+  refactor. New adapters drop into `extension/adapters/` and self-register
+  by hostname.
+
+### Debugging
+
+Both sides of the extension log silently by default. To turn on verbose tracing:
+
+- **Guard (Rust)**: set `RUST_LOG=id4pii=debug,ort=warn` before starting guard.
+  Every WebSocket frame, vault lock, and engine step is logged with a `req_id`
+  field so you can grep one request end to end.
+- **Extension (browser)**: in the extension's service-worker DevTools (find it
+  at `chrome://extensions` → id4pii guard → **Inspect views: service worker**),
+  type `id4pii.debug(true)` in the console. The setting persists in
+  `chrome.storage.local` and applies to background, content script, and
+  in-page main world. Disable with `id4pii.debug(false)`.
+
+Lines have a uniform format: `[id4pii:<component>] <event> key=value …`.
+Components are `bg` (service worker), `iso` (content script), `main` (in-page),
+`bridge` and `engine` (Rust). Each fetch interception generates an 8-char
+`reqId` that is threaded through every hop in both directions, so you can
+follow a single message through `main → iso → bg → bridge → engine` and back.
+
+Privacy invariant: no message text, response body, or vault entry is ever
+logged at any level — only lengths, counts, kinds, durations, and the request
+ID.
+
+### Security
+
+- Bridge binds `127.0.0.1` only.
+- WebSocket handshake rejects unless `Origin` starts with
+  `chrome-extension://`, `moz-extension://`, or `safari-web-extension://` —
+  regular web pages on `localhost` can't open a session.
+- v1 does not pin extension IDs; any installed browser extension can speak
+  to guard. If that matters to you, run guard with `--no-bridge`.
+
 ## Performance
 
 Always run the optimized build — `cargo run` uses the unoptimized `dev`
