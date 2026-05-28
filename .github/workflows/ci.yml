@@ -11,7 +11,11 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -19,6 +23,9 @@ jobs:
           toolchain: "1.95.0"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Provision .env
+        shell: bash
+        run: cp .env.example .env
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
