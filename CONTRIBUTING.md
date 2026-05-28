@@ -58,7 +58,10 @@ cargo test --workspace              # all tests
 cargo test -p id4pii-core           # core only, no .env needed
 cargo fmt --all                     # format
 cargo clippy --all-targets          # lints (workspace is configured strict)
+cargo bench -p id4pii-core          # hot-path benches (deanonymize, anonymize_with_subs)
 ```
+
+CI runs fmt + clippy + check + test on both `ubuntu-latest` and `windows-latest` (with `RUSTFLAGS=-D warnings`, so any clippy `pedantic`/`unwrap`/`expect` warning fails the build). The Windows job is the one that compiles the `cfg(windows)` guard and runs its engine integration tests, so test guard changes on Windows before pushing. CI provisions its own `.env` with `cp .env.example .env`.
 
 ## Running guard locally
 

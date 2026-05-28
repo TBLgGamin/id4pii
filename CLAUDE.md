@@ -51,6 +51,7 @@ data_root/
 - All entry points (`scan`, `anonymize`, `serve`, `guard`) call `model_setup::ensure_model` before `Detector::load`. If files are missing, the fetcher downloads `config.json`, `onnx/model_q4.onnx`, and `onnx/model_q4.onnx_data` from `huggingface.co/openai/privacy-filter/resolve/main/…`. Idempotent — sizes are HEAD-checked against the remote.
 - The tokenizer is **not** downloaded: id4pii embeds the `o200k_base` vocab via `tiktoken-rs`, which produces token ids identical to privacy-filter's own tokenizer (guarded by a regression test in `crates/core/src/detector.rs`).
 - id4pii feeds the model `input_ids` and `attention_mask`. If a run fails with an ONNX error naming a missing required input, that input name needs wiring into `crates/core/src/detector.rs`.
+- **Long inputs are windowed.** `Detector::detect` processes inputs at or below `DETECT_WINDOW` (1024) tokens in a single pass (byte-identical to feeding the whole text); longer inputs are split into overlapping windows (`DETECT_OVERLAP` = 128 tokens) and the per-window spans are stitched by `merge_overlapping` — same-category spans whose byte ranges strictly overlap are unioned. This keeps detection cost linear in length rather than quadratic and avoids depending on the model's context limit. Tune the consts in `detector.rs`.
 
 ## CLI
 
@@ -61,6 +62,8 @@ echo "ssn 123-45-6789" | id4pii scan --format text
 ```
 
 `scan` reads text from the positional argument, `--file`, or stdin. Output is JSON spans by default (`--format text` for a table, `--redact` for masked text; `--style label|block|char`).
+
+`--min-score <f32>` (default `0.0`, i.e. keep every detection) drops spans whose averaged token confidence is below the threshold — the precision/recall dial. It is a shared detection flag, so it also applies to `anonymize` and `serve` (all share `ModelArgs`) and the guard (`--min-score`).
 
 ## Anonymize / deanonymize (the LLM shield)
 
@@ -83,9 +86,11 @@ id4pii serve --addr 127.0.0.1:8080
 ```
 
 - `GET /health` → `ok`
-- `POST /scan` — `{"text": "...", "redact": true}` → `{"spans": [...], "redacted": "..."}`
-- `POST /anonymize` — `{"text": "...", "seed": 1337}` (seed optional) → `{"anonymized": "...", "vault": [...]}`
+- `POST /scan` — `{"text": "...", "redact": true, "min_score": 0.5}` → `{"spans": [...], "redacted": "..."}`
+- `POST /anonymize` — `{"text": "...", "seed": 1337, "min_score": 0.5}` (seed/min_score optional) → `{"anonymized": "...", "vault": [...]}`
 - `POST /deanonymize` — `{"text": "...", "vault": [...]}` → `{"text": "..."}`
+
+`min_score` is optional per request; when omitted it falls back to the server default set with `serve --min-score`.
 
 ## Guard — system-wide hotkey (Windows)
 
@@ -112,7 +117,18 @@ The tray menu carries: bridge status (informational), **Open log file**, **Open 
 
 A single **vault** (persisted via DPAPI at `data_root/vault.bin`) is the id system that makes this reversible: every distinct real value is stored once with its category and a unique surrogate, so the same name always maps to the same surrogate and an email maps to its own — restoration is unambiguous in both directions. The vault is shared across every app and every tab, so a value anonymized in one place restores in another. Surrogates are generated procedurally (street addresses, URLs) or from large name pools, so the supply is effectively unbounded — fiction-safe phone numbers (`555-01xx`) are the one deliberately small set.
 
+`--max-vault-entries <n>` (default `0` = unbounded) caps the vault as a safety ceiling for a daemon that runs for weeks. When exceeded, the oldest entries are evicted FIFO (`Vault::enforce_cap`) and the count is logged. **Eviction is lossy**: text previously anonymized with an evicted entry can no longer be restored, so set the cap well above the working set — it is a backstop, not a routine bound. (LRU would be safer but needs access tracking that the `#[serde(transparent)]` on-disk format deliberately doesn't carry.)
+
 Notes: the guard reads and writes via UI Automation, falling back to a clipboard select-all + copy/paste for rich editors (browser `contenteditable`, some Electron apps) that do not expose direct value access. The `guard` subcommand is Windows only (macOS AX API and Linux AT-SPI are future work); the module is `cfg(windows)`-gated, so the workspace still builds on other platforms — only the subcommand is absent there.
+
+### Engine architecture & testing
+
+The engine (`crates/app/src/guard/engine.rs`) is a single-threaded state machine: it owns the vault and undo state, consumes `Command`s off a `sync_channel`, and publishes `Event`s to the `EventBus`. Its two external dependencies are injected behind traits so it can run without a model or a desktop:
+
+- **`Detect`** — the PII detector. The real `Detector` implements it; tests inject a scripted fake.
+- **`Field`** — the focused-field IO (read / write / targeted substitution). `UiaField` wraps the UI Automation backend in production; tests inject an in-memory fake.
+
+`Engine::load` wires up the real backends; `Engine::with_components` takes the trait objects plus an `EngineConfig { min_score, max_vault_entries }` and is what the tests call (with a `MemoryStore` vault). The integration tests in `engine.rs` drive each `Command` and assert the resulting `Event`s, `BridgeReply`, undo behaviour, and the vault cap — covering the state machine end-to-end with no ONNX model. Because the whole `guard` module is `cfg(windows)`, these tests run on the **Windows CI job** (see Development loop).
 
 ## Browser extension
 
@@ -195,12 +211,23 @@ Measured on a Ryzen 5 9600X with the `model_q4` variant:
 
 The tokenizer is embedded and loads in ~85 ms (in parallel with the ONNX session), so a cold CLI run is dominated by model load and one inference pass. For repeated or latency-sensitive use, `serve` still wins decisively — the model loads once and each request is just inference. Set `RUST_LOG=id4pii_core=debug` to see per-phase load timings.
 
+Long inputs no longer blow up latency: windowed detection (see Model) keeps inference cost linear in token count instead of the model's quadratic attention. The pure hot functions have a criterion bench harness:
+
+```sh
+cargo bench -p id4pii-core        # deanonymize (bucketed restore) + anonymize_with_subs
+```
+
+`deanonymize` buckets vault pairs by first byte, so restore is roughly linear in text length even as the shared guard vault grows large.
+
 ## Development loop
 
 ```sh
 cargo test --workspace
 cargo fmt --all
 cargo clippy --all-targets
+cargo bench -p id4pii-core        # optional: hot-path benches
 ```
 
 Building the app crate requires a `.env` at the repo root (see `CONTRIBUTING.md`). Core can be tested standalone (`cargo test -p id4pii-core`) without `.env`.
+
+CI (`.github/workflows/ci.yml`) runs fmt + clippy + check + test with `RUSTFLAGS=-D warnings` (clippy `pedantic`/`unwrap_used`/`expect_used` are warns promoted to hard errors), on a **matrix of `ubuntu-latest` and `windows-latest`**. The Windows job is what actually compiles the `cfg(windows)` guard and runs its engine tests; the Linux job covers core + the cross-platform surface. Each job provisions a build `.env` with `cp .env.example .env` (the placeholder values satisfy `build.rs`; no secrets are needed for checks).
