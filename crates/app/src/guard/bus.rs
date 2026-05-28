@@ -1,8 +1,6 @@
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +85,7 @@ pub(crate) enum BridgeReply {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) enum Event {
     HotkeyRegistrationFailed {
         combo: &'static str,
@@ -158,12 +157,9 @@ impl EventBus {
         rx
     }
 
-    pub(crate) fn publish(&self, event: Event) {
+    pub(crate) fn publish(&self, event: &Event) {
         for sub in &self.subscribers {
-            match sub.try_send(event.clone()) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
-            }
+            let _ = sub.try_send(event.clone());
         }
     }
 }

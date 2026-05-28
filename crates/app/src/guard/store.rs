@@ -148,13 +148,13 @@ unsafe fn protect(plain: &[u8]) -> Result<Vec<u8>> {
     let mut out = CRYPT_INTEGER_BLOB::default();
     unsafe {
         CryptProtectData(
-            &input,
+            &raw const input,
             None,
-            Some(&ent),
+            Some(&raw const ent),
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut out,
+            &raw mut out,
         )
         .map_err(|e| anyhow!("CryptProtectData: {e}"))?;
     }
@@ -177,13 +177,13 @@ unsafe fn unprotect(cipher: &[u8]) -> Result<Vec<u8>> {
     let mut out = CRYPT_INTEGER_BLOB::default();
     unsafe {
         CryptUnprotectData(
-            &input,
+            &raw const input,
             None,
-            Some(&ent),
+            Some(&raw const ent),
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
-            &mut out,
+            &raw mut out,
         )
         .map_err(|e| anyhow!("CryptUnprotectData: {e}"))?;
     }

@@ -47,6 +47,8 @@ struct ModelArgs {
     model_file: String,
     #[arg(long, default_value_t = 0)]
     threads: usize,
+    #[arg(long, default_value_t = 0.0)]
+    min_score: f32,
 }
 
 #[derive(Args, Debug)]
@@ -137,6 +139,7 @@ pub async fn run() -> Result<()> {
                 args.model.model,
                 args.model.model_file,
                 args.model.threads,
+                args.model.min_score,
             )
             .await
         }
@@ -160,7 +163,9 @@ fn run_scan(args: &ScanArgs) -> Result<()> {
         args.model.threads,
     )
     .context("failed to load model")?;
-    let spans = detector.detect(&text).context("detection failed")?;
+    let spans = detector
+        .detect(&text, args.model.min_score)
+        .context("detection failed")?;
 
     if args.redact {
         println!("{}", redact(&text, &spans, args.style.into()));
@@ -183,7 +188,9 @@ fn run_anonymize(args: &AnonymizeArgs) -> Result<()> {
         args.model.threads,
     )
     .context("failed to load model")?;
-    let spans = detector.detect(&text).context("detection failed")?;
+    let spans = detector
+        .detect(&text, args.model.min_score)
+        .context("detection failed")?;
 
     let mut rng = args.seed.map_or_else(Rng::from_entropy, Rng::new);
     let (anonymized, vault) = anonymize(&text, &spans, &mut rng);

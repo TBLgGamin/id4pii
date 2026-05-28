@@ -249,9 +249,8 @@ async fn client_loop(
                         continue;
                     }
                 };
-                if let Some(response) = handle_client_message(msg, client_id, &command_tx, &vault).await {
-                    if sink.send(Message::Text(response.into())).await.is_err() { break; }
-                }
+                if let Some(response) = handle_client_message(msg, client_id, &command_tx, &vault).await
+                    && sink.send(Message::Text(response.into())).await.is_err() { break; }
             }
             event = event_rx.recv() => {
                 let event = match event {
@@ -259,9 +258,8 @@ async fn client_loop(
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                if let Some(payload) = event_to_message(event, client_id) {
-                    if sink.send(Message::Text(payload.into())).await.is_err() { break; }
-                }
+                if let Some(payload) = event_to_message(event, client_id)
+                    && sink.send(Message::Text(payload.into())).await.is_err() { break; }
             }
         }
     }
@@ -469,25 +467,26 @@ fn event_to_message(event: Event, client_id: u64) -> Option<String> {
             source,
         } => {
             let detail = match summary {
-                OpSummary::Anonymized { count } => format!("count={count}"),
-                OpSummary::Restored { count } => format!("count={count}"),
+                OpSummary::Anonymized { count } | OpSummary::Restored { count } => {
+                    format!("count={count}")
+                }
                 OpSummary::Undone => "undone".into(),
             };
-            forward_op_event(req_id, kind, "completed", detail, source, client_id)
+            forward_op_event(&req_id, kind, "completed", detail, source, client_id)
         }
         Event::OperationFailed {
             req_id,
             kind,
             error,
             source,
-        } => forward_op_event(req_id, kind, "failed", error, source, client_id),
+        } => forward_op_event(&req_id, kind, "failed", error, source, client_id),
         Event::OperationNoChange {
             req_id,
             kind,
             reason,
             source,
         } => forward_op_event(
-            req_id,
+            &req_id,
             kind,
             "no_change",
             no_change_reason_str(reason).into(),
@@ -511,7 +510,7 @@ fn event_to_message(event: Event, client_id: u64) -> Option<String> {
 }
 
 fn forward_op_event(
-    req_id: String,
+    req_id: &str,
     kind: OpKind,
     label: &'static str,
     detail: String,

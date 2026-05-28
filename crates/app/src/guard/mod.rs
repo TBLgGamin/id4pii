@@ -21,7 +21,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 
 use self::bus::{Command, EngineStatus, Event, EventBus, OpKind, Source};
-use self::engine::Engine;
+use self::engine::{Engine, EngineConfig};
 use self::store::DpapiStore;
 
 #[derive(Args, Debug)]
@@ -32,6 +32,10 @@ pub(crate) struct GuardArgs {
     pub(crate) model_file: String,
     #[arg(long, default_value_t = 0)]
     pub(crate) threads: usize,
+    #[arg(long, default_value_t = 0.0)]
+    pub(crate) min_score: f32,
+    #[arg(long, default_value_t = 0)]
+    pub(crate) max_vault_entries: usize,
     #[arg(long, default_value_t = 7878)]
     pub(crate) bridge_port: u16,
     #[arg(long)]
@@ -40,6 +44,7 @@ pub(crate) struct GuardArgs {
     pub(crate) dev_extensions: bool,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     let progress_bar = crate::progress::install_bar();
 
@@ -70,6 +75,10 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
         Arc::clone(&store) as Arc<dyn store::VaultStore>,
         Arc::clone(&bus),
         Arc::clone(&status),
+        EngineConfig {
+            min_score: args.min_score,
+            max_vault_entries: args.max_vault_entries,
+        },
     )?;
     let engine_vault_handle = engine.vault_handle();
 
@@ -77,7 +86,7 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
 
     let engine_handle = std::thread::Builder::new()
         .name("id4pii-engine".into())
-        .spawn(move || engine.run(command_rx))
+        .spawn(move || engine.run(&command_rx))
         .context("failed to spawn engine thread")?;
 
     spawn_feedback_adapter(feedback_rx);
@@ -193,7 +202,7 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
                             info!("backpressure: dropped {kind:?} (engine busy, no active op)");
                         }
                     }
-                    bus.publish(Event::BackpressureDropped { kind });
+                    bus.publish(&Event::BackpressureDropped { kind });
                 }
                 Err(TrySendError::Disconnected(_)) => {
                     error!("engine channel disconnected");
@@ -209,11 +218,10 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
                 if let Some(path) = log_file_path.as_ref() {
                     open_with_shell(path);
                 }
-            } else if event.id == open_log_folder_item.id() {
-                if let Some(dir) = log_dir.as_ref() {
+            } else if event.id == open_log_folder_item.id()
+                && let Some(dir) = log_dir.as_ref() {
                     open_with_shell(dir);
                 }
-            }
         }
     });
 
@@ -233,44 +241,46 @@ fn register_hotkey(
 ) {
     if let Err(err) = manager.register(key) {
         warn!("failed to register {combo}: {err}");
-        bus.publish(Event::HotkeyRegistrationFailed {
+        bus.publish(&Event::HotkeyRegistrationFailed {
             combo,
             error: err.to_string(),
         });
     }
 }
 
+#[allow(clippy::expect_used)]
 fn spawn_status_watchdog(status: Arc<EngineStatus>, bar: indicatif::ProgressBar) {
     std::thread::Builder::new()
         .name("id4pii-watchdog".into())
         .spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(500));
-                let stats = status.stats();
+                let counters = status.stats();
                 let descriptor = match status.snapshot() {
                     Some((kind, step, elapsed)) => {
                         format!("busy {kind:?} step={step} {}ms", elapsed.as_millis())
                     }
-                    None => match stats.last_complete {
+                    None => match counters.last_complete {
                         Some(t) => format!("idle (last {}s ago)", t.elapsed().as_secs()),
                         None => "idle".to_string(),
                     },
                 };
                 bar.set_message(format!(
                     "{descriptor} │ recv={} a={} r={} u={} nc={} fail={} dropped={}",
-                    stats.received,
-                    stats.anonymized,
-                    stats.restored,
-                    stats.undone,
-                    stats.no_change,
-                    stats.failed,
-                    stats.dropped
+                    counters.received,
+                    counters.anonymized,
+                    counters.restored,
+                    counters.undone,
+                    counters.no_change,
+                    counters.failed,
+                    counters.dropped
                 ));
             }
         })
         .expect("failed to spawn watchdog");
 }
 
+#[allow(clippy::expect_used)]
 fn spawn_stats_recorder(rx: Receiver<Event>, status: Arc<EngineStatus>) {
     std::thread::Builder::new()
         .name("id4pii-stats".into())
@@ -289,6 +299,7 @@ fn spawn_stats_recorder(rx: Receiver<Event>, status: Arc<EngineStatus>) {
         .expect("failed to spawn stats recorder");
 }
 
+#[allow(clippy::expect_used)]
 fn spawn_feedback_adapter(rx: Receiver<Event>) {
     std::thread::Builder::new()
         .name("id4pii-feedback-adapter".into())

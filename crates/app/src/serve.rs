@@ -14,6 +14,7 @@ use tracing::info;
 #[derive(Clone)]
 struct AppState {
     detector: Arc<Mutex<Detector>>,
+    min_score: f32,
 }
 
 #[derive(Deserialize)]
@@ -21,6 +22,8 @@ struct ScanRequest {
     text: String,
     #[serde(default)]
     redact: bool,
+    #[serde(default)]
+    min_score: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -35,6 +38,8 @@ struct AnonymizeRequest {
     text: String,
     #[serde(default)]
     seed: Option<u64>,
+    #[serde(default)]
+    min_score: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -67,11 +72,13 @@ pub(crate) async fn run(
     model: PathBuf,
     model_file: String,
     threads: usize,
+    min_score: f32,
 ) -> Result<()> {
     crate::model_setup::ensure_model(&model, &model_file)?;
     let detector = Detector::load(&model, &model_file, threads).context("failed to load model")?;
     let state = AppState {
         detector: Arc::new(Mutex::new(detector)),
+        min_score,
     };
 
     let app = Router::new()
@@ -103,7 +110,10 @@ async fn scan(
                 .detector
                 .lock()
                 .map_err(|_| "detector lock poisoned".to_string())?;
-            let spans = detector.detect(&request.text).map_err(|e| e.to_string())?;
+            let threshold = request.min_score.unwrap_or(state.min_score);
+            let spans = detector
+                .detect(&request.text, threshold)
+                .map_err(|e| e.to_string())?;
             let redacted = request
                 .redact
                 .then(|| redact(&request.text, &spans, RedactStyle::Label));
@@ -126,7 +136,10 @@ async fn anonymize_route(
                 .detector
                 .lock()
                 .map_err(|_| "detector lock poisoned".to_string())?;
-            let spans = detector.detect(&request.text).map_err(|e| e.to_string())?;
+            let threshold = request.min_score.unwrap_or(state.min_score);
+            let spans = detector
+                .detect(&request.text, threshold)
+                .map_err(|e| e.to_string())?;
             let mut rng = request.seed.map_or_else(Rng::from_entropy, Rng::new);
             let (anonymized, vault) = anonymize(&request.text, &spans, &mut rng);
             Ok(AnonymizeResponse { anonymized, vault })

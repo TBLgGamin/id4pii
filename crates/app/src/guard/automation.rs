@@ -51,8 +51,8 @@ fn read_via_clipboard() -> Result<String> {
 
 /// Try to apply each `(find, replace)` pair as a targeted UIA text replacement, preserving
 /// surrounding formatting (bold/italic/lists/newlines). Returns `Ok(true)` if every requested
-/// substitution was applied via TextPattern; `Ok(false)` if the focused element doesn't support
-/// TextPattern (caller should fall back). Errors only on hard failures.
+/// substitution was applied via `TextPattern`; `Ok(false)` if the focused element doesn't support
+/// `TextPattern` (caller should fall back). Errors only on hard failures.
 pub(crate) fn apply_substitutions(substitutions: &[(String, String)]) -> Result<bool> {
     if substitutions.is_empty() {
         return Ok(true);
@@ -71,13 +71,11 @@ pub(crate) fn apply_substitutions(substitutions: &[(String, String)]) -> Result<
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| anyhow!("input init: {e}"))?;
 
     for (find, replace) in substitutions {
-        let doc = match text_pattern.get_document_range() {
-            Ok(r) => r,
-            Err(_) => return Ok(false),
+        let Ok(doc) = text_pattern.get_document_range() else {
+            return Ok(false);
         };
-        let range = match doc.find_text(find, false, false) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Ok(range) = doc.find_text(find, false, false) else {
+            continue;
         };
         if range.select().is_err() {
             continue;

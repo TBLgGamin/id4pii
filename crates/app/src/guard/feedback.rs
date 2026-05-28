@@ -1,4 +1,5 @@
 #![allow(unsafe_code)]
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -114,16 +115,16 @@ fn apply_alpha(src: &Pixmap, dst: &mut Pixmap, alpha: f32) {
     let src_data = src.data();
     let dst_data = dst.data_mut();
     for i in 0..src_data.len() {
-        dst_data[i] = (src_data[i] as f32 * alpha) as u8;
+        dst_data[i] = (f32::from(src_data[i]) * alpha) as u8;
     }
 }
 
 fn pump_messages(hwnd: HWND) {
     let mut msg = MSG::default();
     unsafe {
-        while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        while PeekMessageW(&raw mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&raw const msg);
+            DispatchMessageW(&raw const msg);
         }
     }
 }
@@ -166,7 +167,7 @@ fn register_class() {
             ..Default::default()
         };
         unsafe {
-            RegisterClassW(&wc);
+            RegisterClassW(&raw const wc);
         }
     });
 }
@@ -206,9 +207,16 @@ fn push(hwnd: HWND, pixmap: &Pixmap) -> windows::core::Result<()> {
         };
 
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let bmp = CreateDIBSection(Some(mem_dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
+        let bmp = CreateDIBSection(
+            Some(mem_dc),
+            &raw const bmi,
+            DIB_RGB_COLORS,
+            &raw mut bits,
+            None,
+            0,
+        )?;
         if !bits.is_null() {
-            std::ptr::copy_nonoverlapping(bgra.as_ptr(), bits as *mut u8, bgra.len());
+            std::ptr::copy_nonoverlapping(bgra.as_ptr(), bits.cast::<u8>(), bgra.len());
         }
         let old = SelectObject(mem_dc, bmp.into());
 
@@ -228,11 +236,11 @@ fn push(hwnd: HWND, pixmap: &Pixmap) -> windows::core::Result<()> {
             hwnd,
             Some(screen_dc),
             None,
-            Some(&size),
+            Some(&raw const size),
             Some(mem_dc),
-            Some(&src_pt),
+            Some(&raw const src_pt),
             COLORREF(0),
-            Some(&blend),
+            Some(&raw const blend),
             ULW_ALPHA,
         );
 
