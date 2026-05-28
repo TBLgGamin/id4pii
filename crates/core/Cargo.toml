@@ -15,5 +15,12 @@ thiserror.workspace = true
 tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "anonymize"
+harness = false
+
 [lints]
 workspace = true

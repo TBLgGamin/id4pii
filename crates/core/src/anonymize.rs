@@ -10,8 +10,6 @@ const SURNAMES_TSV: &str = include_str!("../assets/surnames.tsv");
 
 struct NamePool {
     names: Vec<&'static str>,
-    #[allow(dead_code)] // reserved for future locale-aware filtering
-    countries: Vec<&'static str>,
 }
 
 static FORENAMES_POOL: OnceLock<NamePool> = OnceLock::new();
@@ -19,18 +17,16 @@ static SURNAMES_POOL: OnceLock<NamePool> = OnceLock::new();
 
 fn parse_pool(text: &'static str) -> NamePool {
     let mut names = Vec::with_capacity(2200);
-    let mut countries = Vec::with_capacity(2200);
     for line in text.lines() {
-        if let Some((country, name)) = line.split_once('\t') {
+        if let Some((_, name)) = line.split_once('\t') {
             let name = name.trim();
             if name.is_empty() {
                 continue;
             }
-            countries.push(country);
             names.push(name);
         }
     }
-    NamePool { names, countries }
+    NamePool { names }
 }
 
 fn forenames() -> &'static NamePool {
@@ -78,6 +74,20 @@ impl Vault {
             fake: fake.clone(),
         });
         fake
+    }
+
+    /// Evict the oldest entries until at most `max_entries` remain (FIFO), returning the number
+    /// evicted. `max_entries == 0` means unbounded — no eviction ever happens. Eviction is
+    /// lossy: any text previously anonymized with an evicted entry can no longer be restored, so
+    /// callers should set the cap well above the expected working set and treat it as a safety
+    /// ceiling rather than a routine bound.
+    pub fn enforce_cap(&mut self, max_entries: usize) -> usize {
+        if max_entries == 0 || self.entries.len() <= max_entries {
+            return 0;
+        }
+        let evicted = self.entries.len() - max_entries;
+        self.entries.drain(0..evicted);
+        evicted
     }
 }
 
@@ -266,31 +276,39 @@ pub fn anonymize_with_subs(
 
 #[must_use]
 pub fn deanonymize(text: &str, vault: &Vault) -> String {
-    let mut pairs: Vec<(&str, &str)> = vault
-        .entries
-        .iter()
-        .map(|entry| (entry.fake.as_str(), entry.real.as_str()))
-        .filter(|(fake, _)| !fake.is_empty())
-        .collect();
-    pairs.sort_by_key(|(fake, _)| std::cmp::Reverse(fake.len()));
+    let mut buckets: std::collections::HashMap<u8, Vec<(&str, &str)>> =
+        std::collections::HashMap::new();
+    for entry in &vault.entries {
+        let fake = entry.fake.as_str();
+        if let Some(&first) = fake.as_bytes().first() {
+            buckets
+                .entry(first)
+                .or_default()
+                .push((fake, entry.real.as_str()));
+        }
+    }
+    for candidates in buckets.values_mut() {
+        candidates.sort_by_key(|(fake, _)| std::cmp::Reverse(fake.len()));
+    }
 
     let mut result = String::with_capacity(text.len());
     let mut rest = text;
-    while !rest.is_empty() {
-        let mut matched = false;
-        for (fake, real) in &pairs {
-            if let Some(stripped) = rest.strip_prefix(fake) {
-                result.push_str(real);
-                rest = stripped;
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
+    while let Some(&first) = rest.as_bytes().first() {
+        let matched = buckets.get(&first).and_then(|candidates| {
+            candidates
+                .iter()
+                .find_map(|(fake, real)| rest.strip_prefix(fake).map(|stripped| (*real, stripped)))
+        });
+        if let Some((real, stripped)) = matched {
+            result.push_str(real);
+            rest = stripped;
+        } else {
             let mut chars = rest.chars();
             if let Some(character) = chars.next() {
                 result.push(character);
                 rest = chars.as_str();
+            } else {
+                break;
             }
         }
     }
@@ -314,7 +332,7 @@ fn unique_fake(category: Category, rng: &mut Rng, vault: &Vault) -> String {
 fn sanitize_local_part(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
+        .filter(char::is_ascii_alphanumeric)
         .collect()
 }
 
@@ -434,5 +452,46 @@ mod tests {
         let (_, vault) = anonymize(text, &spans, &mut rng);
         assert_eq!(vault.entries.len(), 2);
         assert_ne!(vault.entries[0].fake, vault.entries[1].fake);
+    }
+
+    fn entry(real: &str, fake: &str) -> VaultEntry {
+        VaultEntry {
+            category: Category::PrivatePerson,
+            real: real.to_string(),
+            fake: fake.to_string(),
+        }
+    }
+
+    #[test]
+    fn deanonymize_prefers_longest_surrogate_sharing_a_prefix() {
+        let vault = Vault {
+            entries: vec![entry("Alice", "Bob"), entry("Carol", "Bobby")],
+        };
+        assert_eq!(deanonymize("Bobby and Bob", &vault), "Carol and Alice");
+    }
+
+    #[test]
+    fn enforce_cap_evicts_oldest_and_is_unbounded_at_zero() {
+        let mut vault = Vault {
+            entries: vec![entry("Aaa", "f1"), entry("Bbb", "f2"), entry("Ccc", "f3")],
+        };
+        assert_eq!(vault.enforce_cap(0), 0);
+        assert_eq!(vault.entries.len(), 3);
+        assert_eq!(vault.enforce_cap(5), 0);
+        assert_eq!(vault.enforce_cap(2), 1);
+        assert_eq!(vault.entries.len(), 2);
+        assert_eq!(vault.entries[0].real, "Bbb");
+        assert_eq!(vault.entries[1].real, "Ccc");
+    }
+
+    #[test]
+    fn deanonymize_restores_midtext_and_skips_empty_fakes() {
+        let vault = Vault {
+            entries: vec![entry("real@corp.com", "fake@example.com"), entry("Zed", "")],
+        };
+        assert_eq!(
+            deanonymize("mail fake@example.com now", &vault),
+            "mail real@corp.com now"
+        );
     }
 }
