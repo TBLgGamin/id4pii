@@ -20,6 +20,13 @@ const DETECT_WINDOW: usize = 1024;
 /// entity straddling a window boundary is fully contained in at least one window.
 const DETECT_OVERLAP: usize = 128;
 
+/// Intra-op thread count used when the caller does not specify one (`threads == 0`).
+/// Deliberately small: ONNX Runtime's intra-op pool deadlocks under many sequential `run`
+/// calls (which windowed detection makes) once the thread count is high, while 1–2 threads
+/// run reliably; the model is small enough that more threads add little. Do not raise this to
+/// the core count "for speed" — that reintroduces the hang.
+const DEFAULT_INTRA_THREADS: usize = 2;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PiiSpan {
     pub category: Category,
@@ -65,11 +72,15 @@ impl Detector {
         let labels = load_label_map(&config.id2label)?;
 
         let session_start = std::time::Instant::now();
-        let mut builder =
-            Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
-        if threads > 0 {
-            builder = builder.with_intra_threads(threads)?;
-        }
+        let intra_threads = if threads > 0 {
+            threads
+        } else {
+            DEFAULT_INTRA_THREADS
+        };
+        let mut builder = Session::builder()?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?
+            .with_intra_op_spinning(false)?
+            .with_intra_threads(intra_threads)?;
         let session = builder.commit_from_file(model_dir.join(model_file))?;
         tracing::debug!(elapsed = ?session_start.elapsed(), "onnx session ready");
 
