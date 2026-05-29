@@ -21,8 +21,11 @@ const DETECT_OVERLAP: usize = 128;
 
 const MAX_BATCH: usize = 4;
 
+const SEQ_BUCKETS: [usize; 5] = [64, 128, 256, 512, DETECT_WINDOW];
+
 const DEFAULT_INTRA_THREADS: usize = 2;
 
+#[cfg(any(feature = "directml", feature = "cuda"))]
 const FORCE_CPU_ENV: &str = "ID4PII_CPU";
 
 #[derive(Deserialize)]
@@ -35,7 +38,7 @@ pub(crate) struct ModelDetector {
     tokenizer: CoreBPE,
     labels: Vec<Option<Category>>,
     output_name: String,
-
+    bucket_shapes: bool,
     token_len: HashMap<u32, usize>,
 }
 
@@ -48,22 +51,28 @@ impl fmt::Debug for ModelDetector {
     }
 }
 
-fn execution_providers() -> Vec<ExecutionProviderDispatch> {
-    let force_cpu =
-        std::env::var(FORCE_CPU_ENV).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+fn execution_providers() -> (Vec<ExecutionProviderDispatch>, bool) {
     let mut providers: Vec<ExecutionProviderDispatch> = Vec::new();
-    if !force_cpu {
-        #[cfg(feature = "directml")]
-        providers.push(ort::execution_providers::DirectMLExecutionProvider::default().build());
-        #[cfg(feature = "cuda")]
-        providers.push(ort::execution_providers::CUDAExecutionProvider::default().build());
-    }
+    #[cfg(any(feature = "directml", feature = "cuda"))]
+    let gpu = {
+        let force_cpu =
+            std::env::var(FORCE_CPU_ENV).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        if !force_cpu {
+            #[cfg(feature = "directml")]
+            providers.push(ort::execution_providers::DirectMLExecutionProvider::default().build());
+            #[cfg(feature = "cuda")]
+            providers.push(ort::execution_providers::CUDAExecutionProvider::default().build());
+        }
+        !force_cpu
+    };
+    #[cfg(not(any(feature = "directml", feature = "cuda")))]
+    let gpu = false;
     providers.push(
         CPUExecutionProvider::default()
             .with_arena_allocator(true)
             .build(),
     );
-    providers
+    (providers, gpu)
 }
 
 impl ModelDetector {
@@ -86,12 +95,13 @@ impl ModelDetector {
         } else {
             DEFAULT_INTRA_THREADS
         };
+        let (providers, bucket_shapes) = execution_providers();
         let mut builder: SessionBuilder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_memory_pattern(true)?
             .with_intra_op_spinning(false)?
             .with_intra_threads(intra_threads)?
-            .with_execution_providers(execution_providers())?;
+            .with_execution_providers(providers)?;
         let session = builder.commit_from_file(model_dir.join(model_file))?;
         tracing::debug!(elapsed = ?session_start.elapsed(), "onnx session ready");
 
@@ -110,6 +120,7 @@ impl ModelDetector {
             tokenizer,
             labels,
             output_name,
+            bucket_shapes,
             token_len: HashMap::new(),
         })
     }
@@ -217,10 +228,15 @@ impl ModelDetector {
         let label_count = self.labels.len();
         for chunk in windows.chunks(MAX_BATCH) {
             let batch = chunk.len();
-            let padded = chunk.iter().map(|w| w.tokens.len()).max().unwrap_or(0);
-            if padded == 0 {
+            let max_len = chunk.iter().map(|w| w.tokens.len()).max().unwrap_or(0);
+            if max_len == 0 {
                 continue;
             }
+            let padded = if self.bucket_shapes {
+                bucket_len(max_len)
+            } else {
+                max_len
+            };
             let mut ids = vec![0i64; batch * padded];
             let mut mask = vec![0i64; batch * padded];
             for (b, window) in chunk.iter().enumerate() {
@@ -339,6 +355,15 @@ fn flush(current: &mut Option<SpanBuilder>, spans: &mut Vec<PiiSpan>, text: &str
         text: trimmed.to_string(),
         score: builder.prob_sum / builder.token_count.max(1) as f32,
     });
+}
+
+fn bucket_len(n: usize) -> usize {
+    for &bucket in &SEQ_BUCKETS {
+        if n <= bucket {
+            return bucket;
+        }
+    }
+    n
 }
 
 fn argmax_softmax(row: &[f32]) -> (usize, f32) {
