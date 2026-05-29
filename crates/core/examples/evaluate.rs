@@ -1,15 +1,3 @@
-//! Formal evaluation of the id4pii engine against the committed labelled corpus
-//! (`crates/core/data/pii_dataset.tsv`).
-//!
-//! Always reports (model-free):
-//!   * regex pre-pass precision / recall / F1 per category,
-//!   * the token reduction the regex masking buys the model.
-//!
-//! When the model is present (`%LOCALAPPDATA%/id4pii/model/…`, populated by any `id4pii scan`),
-//! it additionally compares **model-only** vs **hybrid** detection on both correctness and
-//! wall-clock speed over the whole corpus — the formal version of the ad-hoc A/B.
-//!
-//! Run: `cargo run --release --example evaluate -p id4pii-core`
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -27,7 +15,6 @@ fn dataset_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/pii_dataset.tsv")
 }
 
-/// Replicate the engine's masking (each regex hit → single space) for the token-reduction metric.
 fn mask_text(text: &str, spans: &[PiiSpan]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
@@ -47,7 +34,6 @@ fn corpus_bytes(examples: &[Example]) -> usize {
     examples.iter().map(|e| e.text.len()).sum()
 }
 
-/// Run `detect` over the corpus, returning the report and the elapsed detection time.
 fn timed_eval<F>(examples: &[Example], detect: F) -> (Report, std::time::Duration)
 where
     F: FnMut(&str) -> Vec<PiiSpan>,
@@ -88,14 +74,12 @@ fn main() {
         path.display()
     );
 
-    // ---- 1. Regex pre-pass (model-free) ----
     println!("== Regex pre-pass (model-free) ==");
     let (regex_report, regex_time) = timed_eval(&examples, regex_scan);
     print!("{}", regex_report.format_table());
     throughput_line("regex_scan", &examples, regex_time);
     println!("(person/address have no regex coverage by design — the model supplies those)\n");
 
-    // ---- 2. Token reduction the masking buys the model (model-free) ----
     let bpe = tiktoken_rs::o200k_base().expect("tokenizer");
     let mut orig = 0usize;
     let mut masked = 0usize;
@@ -114,7 +98,6 @@ fn main() {
         }
     );
 
-    // ---- 3. Model-only vs hybrid (only when the model is present) ----
     let dir = model_dir::default_dir();
     if !model_dir::is_complete(&dir, model_dir::DEFAULT_MODEL_FILE) {
         println!(
@@ -133,8 +116,6 @@ fn main() {
         }
     };
 
-    // The model passes run two inferences per example, so by default they evaluate a sample of
-    // the corpus to stay quick. Set ID4PII_EVAL_LIMIT=0 for the full corpus.
     let limit = std::env::var("ID4PII_EVAL_LIMIT")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -166,7 +147,6 @@ fn main() {
     throughput_line("hybrid", sample, hybrid_time);
     println!();
 
-    // ---- Summary ----
     let mo = model_report.overall();
     let hy = hybrid_report.overall();
     let speedup = model_time.as_secs_f64() / hybrid_time.as_secs_f64().max(1e-9);

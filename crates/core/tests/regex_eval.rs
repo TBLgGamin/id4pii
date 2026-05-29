@@ -1,9 +1,3 @@
-//! Model-free correctness guard for the regex pre-pass, run in CI against the committed corpus.
-//!
-//! This does not need the ONNX model, so it runs on every CI job. It asserts the regex
-//! pre-pass keeps clearing a floor on the categories it actually targets (email, URL, phone,
-//! account/card/SSN, date) — a regression in a pattern shows up here. Person/address are left
-//! to the model and are intentionally not asserted.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::PathBuf;
@@ -45,7 +39,6 @@ fn regex_prepass_meets_quality_floor() {
     let email = report.per_category[idx(Category::PrivateEmail)];
     let account = report.per_category[idx(Category::AccountNumber)];
 
-    // Regex patterns are exact, so precision must be high where there is gold to hit.
     assert!(
         email.precision() >= 0.80,
         "email precision regressed: {:.3}",
@@ -56,15 +49,13 @@ fn regex_prepass_meets_quality_floor() {
         "email recall regressed: {:.3}",
         email.recall()
     );
-    // Account numbers (cards via Luhn, SSN, IBAN) should be recalled reasonably.
+
     assert!(
         account.recall() >= 0.40,
         "account_number recall regressed: {:.3}",
         account.recall()
     );
 
-    // The pre-pass must contribute real detections without flooding false positives across the
-    // categories it targets.
     let targeted = [
         Category::PrivateEmail,
         Category::PrivateUrl,

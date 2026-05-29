@@ -1,7 +1,3 @@
-// Privacy discipline: never log `text`, `output`, `restored`, `previous_text`,
-// `expected_current_text`, or any `vault.entries[*]` field. Only kinds, categories,
-// counts, durations, step names.
-
 use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -22,8 +18,6 @@ const IO_TIMEOUT: Duration = Duration::from_secs(8);
 const DETECT_TIMEOUT: Duration = Duration::from_secs(15);
 const SAVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// PII detection seam. Implemented by the real ONNX [`Detector`] in production and by a
-/// scripted fake in tests, so the engine state machine can be exercised without a model.
 pub(crate) trait Detect: Send {
     fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>>;
 }
@@ -34,8 +28,6 @@ impl Detect for Detector {
     }
 }
 
-/// Focused-field IO seam: read and rewrite whatever editable control currently has OS focus.
-/// Implemented by the UI Automation backend in production and by an in-memory fake in tests.
 pub(crate) trait Field: Send + Sync {
     fn read(&self) -> Result<String>;
     fn write(&self, text: &str) -> Result<()>;
@@ -56,8 +48,6 @@ impl Field for UiaField {
     }
 }
 
-/// Detection and vault tuning knobs, grouped so the engine constructors keep a stable
-/// signature as more are added.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EngineConfig {
     pub min_score: f32,
@@ -807,7 +797,6 @@ mod tests {
     use super::super::store::MemoryStore;
     use super::*;
 
-    /// Detector double: tags every occurrence of `needle` as `category`, no model required.
     struct FakeDetector {
         needle: String,
         category: Category,
@@ -833,8 +822,6 @@ mod tests {
         }
     }
 
-    /// Field double: an in-memory editable buffer. `supports_substitutions` toggles whether the
-    /// targeted-edit path succeeds or forces the full-replace fallback.
     struct FakeField {
         text: Mutex<String>,
         supports_substitutions: bool,

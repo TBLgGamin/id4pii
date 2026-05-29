@@ -1,22 +1,3 @@
-//! The fast half of detection: a single compiled regular expression that recognizes the
-//! structurally-regular PII and secrets (emails, URLs, phone numbers, card/account numbers,
-//! dates, API keys, …) in one linear, backtrack-free pass over the text.
-//!
-//! Design for speed:
-//! - **One engine, one pass.** Every pattern is OR-ed into a single [`Regex`]; the crate's
-//!   lazy-DFA scans the text once and never backtracks, so cost is `O(len)` regardless of how
-//!   many patterns there are.
-//! - **`O(1)` category lookup.** Each pattern is wrapped in exactly one named capture group and
-//!   uses only non-capturing `(?:…)` groups internally, so capture-group index `i` maps
-//!   directly to `specs[i-1]` — no name hashing per match.
-//! - **Compiled once.** The engine is built behind a [`OnceLock`] and shared process-wide.
-//!
-//! Patterns are RE2-compatible (no look-around or back-references, which the `regex` crate
-//! rejects) and deliberately precise: a [Luhn] check gates card numbers so a bad match never
-//! masks real text out from under the model.
-//!
-//! [Luhn]: https://en.wikipedia.org/wiki/Luhn_algorithm
-
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -24,19 +5,13 @@ use regex::Regex;
 use super::PiiSpan;
 use crate::labels::Category;
 
-/// Per-pattern metadata, indexed in lockstep with the alternation order so capture-group `i`
-/// resolves to `specs[i - 1]`.
 struct Spec {
     category: Category,
-    /// When set, the matched text must pass the Luhn checksum to be emitted (card numbers).
+
     luhn: bool,
 }
 
-/// `(regex, category, needs_luhn)`, ordered most-specific first so that when two alternatives
-/// could match at the same position the more precise one wins (the `regex` crate uses
-/// leftmost-first / preference-order semantics). Every group inside a pattern is non-capturing.
 const PATTERNS: &[(&str, Category, bool)] = &[
-    // ---- Secrets: high-entropy credentials with distinctive prefixes/structure ----
     (
         r"(?s:-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)",
         Category::Secret,
@@ -78,7 +53,6 @@ const PATTERNS: &[(&str, Category, bool)] = &[
         Category::Secret,
         false,
     ),
-    // ---- URLs ----
     (
         r"(?:https?|ftp)://[^\s/$.?#][^\s]*",
         Category::PrivateUrl,
@@ -89,13 +63,11 @@ const PATTERNS: &[(&str, Category, bool)] = &[
         Category::PrivateUrl,
         false,
     ),
-    // ---- Email ----
     (
         r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}",
         Category::PrivateEmail,
         false,
     ),
-    // ---- Account / card / national numbers ----
     (
         r"\b[A-Z]{2}[0-9]{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,3})?\b",
         Category::AccountNumber,
@@ -111,8 +83,6 @@ const PATTERNS: &[(&str, Category, bool)] = &[
         Category::AccountNumber,
         false,
     ),
-    // ---- Phone numbers (a separator or leading + is required, so bare digit runs are not
-    // mistaken for phones) ----
     (
         r"\+[0-9]{1,3}[ .-]?(?:\([0-9]{1,4}\)[ .-]?)?[0-9]{2,4}(?:[ .-][0-9]{2,4}){1,4}",
         Category::PrivatePhone,
@@ -128,7 +98,6 @@ const PATTERNS: &[(&str, Category, bool)] = &[
         Category::PrivatePhone,
         false,
     ),
-    // ---- Dates ----
     (
         r"\b[0-9]{4}-[0-9]{2}-[0-9]{2}\b",
         Category::PrivateDate,
@@ -159,7 +128,6 @@ pub(crate) struct RegexDetector {
 static GLOBAL: OnceLock<RegexDetector> = OnceLock::new();
 
 impl RegexDetector {
-    /// The process-wide detector, compiled on first use.
     pub(crate) fn global() -> &'static RegexDetector {
         GLOBAL.get_or_init(RegexDetector::build)
     }
@@ -171,7 +139,7 @@ impl RegexDetector {
             if i > 0 {
                 combined.push('|');
             }
-            // Each pattern is its own capture group `gN`; index N+1 == specs[N].
+
             combined.push_str("(?P<g");
             combined.push_str(&i.to_string());
             combined.push('>');
@@ -182,19 +150,17 @@ impl RegexDetector {
                 luhn: *luhn,
             });
         }
-        // The pattern set is a compile-time constant; a failure here is a programming error.
+
         let combined = Regex::new(&combined)
             .unwrap_or_else(|e| panic!("id4pii built-in PII regex failed to compile: {e}"));
         Self { combined, specs }
     }
 
-    /// Scan `text` once and return every structural PII/secret match as a [`PiiSpan`] with a
-    /// confidence of `1.0`. Matches are non-overlapping and yielded in ascending start order.
     pub(crate) fn detect(&self, text: &str) -> Vec<PiiSpan> {
         let mut spans = Vec::new();
         for caps in self.combined.captures_iter(text) {
             let Some(whole) = caps.get(0) else { continue };
-            // Exactly one named group participates per match; find it to recover the category.
+
             let Some(group) = (1..caps.len()).find(|&i| caps.get(i).is_some()) else {
                 continue;
             };
@@ -216,8 +182,6 @@ impl RegexDetector {
     }
 }
 
-/// Luhn checksum over the digits of `s` (separators ignored), gated to 13–19 digit lengths so
-/// it only accepts plausible payment-card numbers.
 fn luhn_ok(s: &str) -> bool {
     let digits: Vec<u8> = s
         .bytes()
@@ -265,10 +229,9 @@ mod tests {
 
     #[test]
     fn validates_credit_card_with_luhn() {
-        // 4111 1111 1111 1111 is the canonical Luhn-valid Visa test number.
         let good = RegexDetector::global().detect("card 4111 1111 1111 1111 ok");
         assert!(good.iter().any(|s| s.category == Category::AccountNumber));
-        // Same shape, last digit broken -> fails Luhn -> not emitted (model can still catch it).
+
         let bad = RegexDetector::global().detect("card 4111 1111 1111 1112 no");
         assert!(!bad.iter().any(|s| s.category == Category::AccountNumber));
     }

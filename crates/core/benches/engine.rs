@@ -1,17 +1,3 @@
-//! Formal benchmark suite for the id4pii engine, run over the committed labelled corpus
-//! (`crates/core/data/pii_dataset.tsv`, 1500 examples). Each group targets one engine area so a
-//! regression shows up where it lives:
-//!
-//! - **parse** — the fast TSV loader (`load_tsv`), throughput in bytes of corpus file.
-//! - **`detect_regex`** — the regex pre-pass (`regex_scan`) over every example, throughput in
-//!   bytes of text scanned.
-//! - **anonymize** — `anonymize_with_subs` over each example's gold spans.
-//! - **deanonymize** — restoring the whole anonymized corpus against one large shared vault.
-//! - **scaling** — synthetic fixed-size micro-benches (stable regression guards) for
-//!   `deanonymize` and `anonymize_with_subs`.
-//!
-//! Correctness (precision / recall / F1) is measured by `cargo run --example evaluate`, which
-//! also compares model-only vs hybrid latency when the model is present.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -37,7 +23,6 @@ fn load() -> Vec<Example> {
     load_tsv(&dataset_path()).expect("load benchmark corpus")
 }
 
-/// Gold spans of an example as `PiiSpan`s (dropping don't-care "other" labels).
 fn spans_of(ex: &Example) -> Vec<PiiSpan> {
     ex.labels
         .iter()
@@ -101,8 +86,7 @@ fn bench_anonymize(c: &mut Criterion) {
 
 fn bench_deanonymize(c: &mut Criterion) {
     let examples = load();
-    // Anonymize the whole corpus once into a single shared vault, then benchmark restoring it —
-    // realistic for the long-lived guard vault that accumulates every value it has ever seen.
+
     let mut rng = Rng::new(1);
     let mut vault = Vault::default();
     let mut anon_texts = Vec::with_capacity(examples.len());
@@ -123,8 +107,6 @@ fn bench_deanonymize(c: &mut Criterion) {
     });
     group.finish();
 }
-
-// ---- Synthetic fixed-size scaling guards (stable across corpus changes) ----
 
 fn build_vault(n: usize) -> Vault {
     let mut entries = Vec::with_capacity(n);

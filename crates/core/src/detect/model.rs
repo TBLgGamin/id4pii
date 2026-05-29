@@ -1,9 +1,3 @@
-//! The transformer half of detection: ONNX Runtime inference over the
-//! [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) token-classifier,
-//! plus span decoding. This is the slow, contextual recognizer. The hybrid orchestrator in
-//! [`super`] runs the cheap [`regex`](super::regex) pre-pass first and feeds this model a
-//! shortened text, so the heavy inference processes fewer tokens.
-
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
@@ -21,30 +15,14 @@ use super::PiiSpan;
 use crate::error::{Error, Result};
 use crate::labels::{Category, load_label_map};
 
-/// Token-window size for long inputs. Sequences at or below this length are detected in a
-/// single inference pass (identical to processing the whole input at once); longer ones are
-/// split into windows of this size. Sized so a typical chat field stays single-pass.
 const DETECT_WINDOW: usize = 1024;
-/// Token overlap between adjacent windows. Must exceed the longest expected entity so any
-/// entity straddling a window boundary is fully contained in at least one window.
+
 const DETECT_OVERLAP: usize = 128;
 
-/// Maximum sequences fed to ONNX Runtime in a single batched `run`. Windowed inputs and batched
-/// requests are split into chunks of this size: bigger chunks amortize the large fixed per-`run`
-/// cost over more sequences, smaller chunks bound the peak attention memory. Each batch element
-/// holds its own up-to-`DETECT_WINDOW`-token attention, so peak memory grows with this; 4 keeps
-/// it to a few times a single window while still collapsing most inputs into one call.
 const MAX_BATCH: usize = 4;
 
-/// Intra-op thread count used when the caller does not specify one (`threads == 0`).
-/// Deliberately small: ONNX Runtime's intra-op pool deadlocks under many sequential `run`
-/// calls (which windowed detection makes) once the thread count is high, while 1–2 threads
-/// run reliably; the model is small enough that more threads add little. Do not raise this to
-/// the core count "for speed" — that reintroduces the hang.
 const DEFAULT_INTRA_THREADS: usize = 2;
 
-/// Environment variable that forces the CPU execution provider even in a build that bundles a
-/// GPU provider (`--features cuda`/`directml`). Useful for A/B and for debugging.
 const FORCE_CPU_ENV: &str = "ID4PII_CPU";
 
 #[derive(Deserialize)]
@@ -52,17 +30,12 @@ struct ModelConfig {
     id2label: BTreeMap<String, String>,
 }
 
-/// ONNX token-classifier wrapped with the embedded tokenizer and label map. Owns a small
-/// token-length cache so the byte-offset table — rebuilt on every `detect` call — does not
-/// re-decode the same token ids over and over across the warm `serve`/guard request loop.
 pub(crate) struct ModelDetector {
     session: Session,
     tokenizer: CoreBPE,
     labels: Vec<Option<Category>>,
     output_name: String,
-    /// `token id -> decoded byte length`. Byte length is a pure function of the id, so this is
-    /// always safe to memoize; it turns the per-token `decode_bytes` allocation into a hashmap
-    /// hit once a token has been seen.
+
     token_len: HashMap<u32, usize>,
 }
 
@@ -75,13 +48,9 @@ impl fmt::Debug for ModelDetector {
     }
 }
 
-/// Build the ordered execution-provider list. GPU providers (registered only in a build with the
-/// matching cargo feature) are tried first with non-fatal registration, so a machine without the
-/// GPU/runtime silently falls back to the CPU provider, which always closes the list with its
-/// arena allocator enabled (buffer reuse across runs).
 fn execution_providers() -> Vec<ExecutionProviderDispatch> {
-    let force_cpu = std::env::var(FORCE_CPU_ENV)
-        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let force_cpu =
+        std::env::var(FORCE_CPU_ENV).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let mut providers: Vec<ExecutionProviderDispatch> = Vec::new();
     if !force_cpu {
         #[cfg(feature = "directml")]
@@ -89,7 +58,11 @@ fn execution_providers() -> Vec<ExecutionProviderDispatch> {
         #[cfg(feature = "cuda")]
         providers.push(ort::execution_providers::CUDAExecutionProvider::default().build());
     }
-    providers.push(CPUExecutionProvider::default().with_arena_allocator(true).build());
+    providers.push(
+        CPUExecutionProvider::default()
+            .with_arena_allocator(true)
+            .build(),
+    );
     providers
 }
 
@@ -141,8 +114,6 @@ impl ModelDetector {
         })
     }
 
-    /// Decoded byte length of a single token, memoized. The first time a token id is seen it is
-    /// decoded once; afterwards it is a hashmap lookup.
     fn token_byte_len(&mut self, token: u32) -> Result<usize> {
         if let Some(&len) = self.token_len.get(&token) {
             return Ok(len);
@@ -156,8 +127,6 @@ impl ModelDetector {
         Ok(len)
     }
 
-    /// Tokenize `text` and build its token byte-offset table (`offsets[i]` is the byte index
-    /// where token `i` begins; `offsets[len]` is the text length).
     fn tokenize(&mut self, text: &str) -> Result<(Vec<u32>, Vec<usize>)> {
         let tokens = self.tokenizer.encode_ordinary(text);
         let mut offsets = Vec::with_capacity(tokens.len() + 1);
@@ -170,26 +139,16 @@ impl ModelDetector {
         Ok((tokens, offsets))
     }
 
-    /// Detect PII spans in `text`. Spans scoring below `min_score` are dropped (pass `0.0`
-    /// to keep every detection). Inputs longer than [`DETECT_WINDOW`] tokens are processed in
-    /// overlapping windows; all windows are fed to ONNX Runtime as a single batched inference
-    /// (in chunks of [`MAX_BATCH`]) so the large fixed per-`run` cost is paid once, not per
-    /// window. Inputs within one window take a single sequence.
     pub(crate) fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
         let results = self.detect_batch(&[text], min_score)?;
         Ok(results.into_iter().next().unwrap_or_default())
     }
 
-    /// Detect PII in many texts at once, batching every text's window(s) into shared inferences
-    /// so a burst of requests pays the fixed per-`run` cost collectively rather than each. The
-    /// returned vector is aligned with `texts`.
     pub(crate) fn detect_batch(
         &mut self,
         texts: &[&str],
         min_score: f32,
     ) -> Result<Vec<Vec<PiiSpan>>> {
-        // Pass 1: tokenize every text up front so the per-text token/offset buffers are stable
-        // before any `Window` borrows into them (growing the storage would invalidate refs).
         let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(texts.len());
         let mut offsets: Vec<Vec<usize>> = Vec::with_capacity(texts.len());
         for text in texts {
@@ -203,7 +162,6 @@ impl ModelDetector {
             offsets.push(off);
         }
 
-        // Pass 2: build the window list referencing the now-stable storage.
         let mut windows: Vec<Window> = Vec::new();
         let mut multi_window = vec![false; texts.len()];
         for (index, text) in texts.iter().enumerate() {
@@ -255,10 +213,6 @@ impl ModelDetector {
         Ok(out)
     }
 
-    /// Run `windows` through the model in batched chunks and decode each window's logits into the
-    /// span list at its `out_index`. Sequences in a chunk are right-padded to the longest one and
-    /// padding is masked out via `attention_mask`, so a row's outputs depend only on its own
-    /// tokens — batching is equivalent to running each window alone.
     fn run_and_decode(&mut self, windows: &[Window], out: &mut [Vec<PiiSpan>]) -> Result<()> {
         let label_count = self.labels.len();
         for chunk in windows.chunks(MAX_BATCH) {
@@ -307,9 +261,6 @@ impl ModelDetector {
     }
 }
 
-/// One token sequence to classify: a (possibly windowed) slice of a text's tokens, the full
-/// text's offset table, the token index the slice starts at, the source text, and which output
-/// span list the decoded spans belong to.
 struct Window<'a> {
     tokens: &'a [u32],
     offsets: &'a [usize],
@@ -318,8 +269,6 @@ struct Window<'a> {
     out_index: usize,
 }
 
-/// Decode one window's logits (length `padded * label_count`; only the first `tokens.len()` rows
-/// are read) into spans appended to `out[window.out_index]`.
 fn decode_window(
     logits: &[f32],
     window: &Window,

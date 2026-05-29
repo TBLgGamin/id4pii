@@ -17,8 +17,7 @@ tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [features]
-# Opt-in GPU execution providers. Off by default so the standard build stays CPU-only and needs
-# no GPU runtime; when enabled, the matching provider is tried first and falls back to CPU.
+
 cuda = ["ort/cuda"]
 directml = ["ort/directml"]
 

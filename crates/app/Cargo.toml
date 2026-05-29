@@ -19,8 +19,7 @@ name = "id4pii-guard"
 path = "src/bin/id4pii_guard.rs"
 
 [features]
-# Forward the GPU execution-provider features to id4pii-core. Build e.g. with
-# `cargo build --release --features directml` to bundle the DirectML provider.
+
 cuda = ["id4pii-core/cuda"]
 directml = ["id4pii-core/directml"]
 

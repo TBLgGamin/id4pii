@@ -37,9 +37,6 @@ fn surnames() -> &'static NamePool {
     SURNAMES_POOL.get_or_init(|| parse_pool(SURNAMES_TSV))
 }
 
-/// Eagerly parse the embedded name pools. Safe to call from any thread, idempotent. Useful
-/// from a background warm-up thread at app startup so the first anonymize doesn't pay the
-/// ~few-ms parse cost on the user-facing path.
 pub fn warm_up_pools() {
     let _ = forenames();
     let _ = surnames();
@@ -76,11 +73,6 @@ impl Vault {
         fake
     }
 
-    /// Evict the oldest entries until at most `max_entries` remain (FIFO), returning the number
-    /// evicted. `max_entries == 0` means unbounded — no eviction ever happens. Eviction is
-    /// lossy: any text previously anonymized with an evicted entry can no longer be restored, so
-    /// callers should set the cap well above the expected working set and treat it as a safety
-    /// ceiling rather than a routine bound.
     pub fn enforce_cap(&mut self, max_entries: usize) -> usize {
         if max_entries == 0 || self.entries.len() <= max_entries {
             return 0;
@@ -240,9 +232,6 @@ pub fn anonymize_into(text: &str, spans: &[PiiSpan], rng: &mut Rng, vault: &mut 
     result
 }
 
-/// Like [`anonymize_into`], but also returns the list of `(real, fake)` substitutions in
-/// document order. Useful when the caller wants to apply per-substring edits to a rich-text
-/// surface (preserving formatting) instead of overwriting the whole text.
 #[must_use]
 pub fn anonymize_with_subs(
     text: &str,
@@ -276,9 +265,6 @@ pub fn anonymize_with_subs(
 
 #[must_use]
 pub fn deanonymize(text: &str, vault: &Vault) -> String {
-    // Bucket surrogates by their first byte into a flat 256-slot table. Indexing by byte is a
-    // plain array access — no hashing — which matters because the scan loop below probes a
-    // bucket at *every* position in the text; a `HashMap<u8, _>` hashed the key each time.
     let mut buckets: Vec<Vec<(&str, &str)>> = Vec::new();
     buckets.resize_with(256, Vec::new);
     for entry in &vault.entries {
@@ -287,7 +273,7 @@ pub fn deanonymize(text: &str, vault: &Vault) -> String {
             buckets[first as usize].push((fake, entry.real.as_str()));
         }
     }
-    // Longest surrogate first so a fake that is a prefix of another never shadows it.
+
     for candidates in &mut buckets {
         if candidates.len() > 1 {
             candidates.sort_by_key(|(fake, _)| std::cmp::Reverse(fake.len()));

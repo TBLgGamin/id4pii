@@ -11,13 +11,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
-/// Upper bound on requests coalesced into one batched inference. The model batches in its own
-/// chunks beyond this; this just caps how many in-flight requests one batch drains.
 const MAX_REQUEST_BATCH: usize = 16;
 
 type DetectResult = std::result::Result<Vec<PiiSpan>, String>;
 
-/// A detection request handed to the batching thread, with a one-shot channel for its result.
 struct DetectJob {
     text: String,
     reply: oneshot::Sender<DetectResult>,
@@ -79,10 +76,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Own the detector on a dedicated thread that drains the request queue: it blocks for one job,
-/// pulls any others already queued (up to [`MAX_REQUEST_BATCH`]), and detects them in a single
-/// batched call. Under load, requests that arrive while an inference is in flight naturally form
-/// the next batch, so no artificial latency is added.
 fn spawn_batcher(mut detector: Detector, mut rx: mpsc::UnboundedReceiver<DetectJob>) -> Result<()> {
     std::thread::Builder::new()
         .name("id4pii-detect-batcher".to_string())

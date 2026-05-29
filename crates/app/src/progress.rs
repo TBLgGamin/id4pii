@@ -6,9 +6,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 static PROGRESS_BAR: OnceLock<ProgressBar> = OnceLock::new();
 
-/// Install (idempotently) a spinner-style progress bar pinned to the bottom of the terminal.
-/// Subsequent tracing log lines go through [`AdaptiveWriter`] which prints them above the
-/// bar without clobbering it. Call from a long-running command (e.g. `guard`) on startup.
 pub(crate) fn install_bar() -> &'static ProgressBar {
     PROGRESS_BAR.get_or_init(|| {
         let bar = ProgressBar::new_spinner();
@@ -23,7 +20,6 @@ pub(crate) fn install_bar() -> &'static ProgressBar {
     })
 }
 
-/// Cleanly clear the bar from the terminal on shutdown.
 pub(crate) fn finish_bar() {
     if let Some(bar) = PROGRESS_BAR.get() {
         bar.finish_and_clear();

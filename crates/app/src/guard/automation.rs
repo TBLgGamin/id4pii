@@ -49,10 +49,6 @@ fn read_via_clipboard() -> Result<String> {
     Ok(text)
 }
 
-/// Try to apply each `(find, replace)` pair as a targeted UIA text replacement, preserving
-/// surrounding formatting (bold/italic/lists/newlines). Returns `Ok(true)` if every requested
-/// substitution was applied via `TextPattern`; `Ok(false)` if the focused element doesn't support
-/// `TextPattern` (caller should fall back). Errors only on hard failures.
 pub(crate) fn apply_substitutions(substitutions: &[(String, String)]) -> Result<bool> {
     if substitutions.is_empty() {
         return Ok(true);

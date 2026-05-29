@@ -29,7 +29,6 @@ SOURCE_URL = (
     "synth_dataset_v2.json"
 )
 
-# Presidio entity_type -> id4pii category (snake_case). Anything absent maps to "other".
 CATEGORY_MAP = {
     "PERSON": "private_person",
     "STREET_ADDRESS": "private_address",
@@ -43,7 +42,6 @@ CATEGORY_MAP = {
     "US_DRIVER_LICENSE": "account_number",
 }
 
-
 def escape(text: str) -> str:
     return (
         text.replace("\\", "\\\\")
@@ -52,14 +50,13 @@ def escape(text: str) -> str:
         .replace("\n", "\\n")
     )
 
-
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     out_path = repo_root / "crates" / "core" / "data" / "pii_dataset.tsv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"downloading {SOURCE_URL}")
-    with urllib.request.urlopen(SOURCE_URL) as resp:  # noqa: S310 (trusted GitHub raw URL)
+    with urllib.request.urlopen(SOURCE_URL) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
     rows: list[str] = []
@@ -73,7 +70,7 @@ def main() -> int:
         for s in ex.get("spans", []):
             byte_start = len(text[: s["start_position"]].encode("utf-8"))
             byte_end = len(text[: s["end_position"]].encode("utf-8"))
-            # Validate the converted offsets recover the labelled value exactly.
+
             if text_bytes[byte_start:byte_end].decode("utf-8", "replace") != s["entity_value"]:
                 mismatches += 1
                 continue
@@ -97,7 +94,6 @@ def main() -> int:
           f"{total_spans - mapped_spans} 'other')")
     print(f"  bytes: {out_path.stat().st_size}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

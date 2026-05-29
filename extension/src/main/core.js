@@ -364,7 +364,7 @@
             LOG.debug("main", "fetch-body-out", { reqId, adapter: adapter.name, changed: true });
             sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
             if (rawBody === newBody) {
-              // unreachable
+
             } else if (init) {
               init = { ...init, body: newBody };
             } else if (input instanceof Request) {

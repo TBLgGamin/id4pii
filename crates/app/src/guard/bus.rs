@@ -164,10 +164,6 @@ impl EventBus {
     }
 }
 
-/// Live state of what the engine is currently doing plus cumulative counters. Updated by the
-/// engine as it walks each operation; observed by the main thread (for richer backpressure
-/// logs) and the watchdog (for periodic status output). Cheap mutexes (no contention in
-/// steady state — single producer, single consumer).
 #[derive(Default)]
 pub(crate) struct EngineStatus {
     state: Mutex<Option<BusyState>>,

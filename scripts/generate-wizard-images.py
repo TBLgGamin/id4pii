@@ -18,12 +18,10 @@ LARGE = ROOT / "installer" / "wizard-image.bmp"
 SMALL = ROOT / "installer" / "wizard-small.bmp"
 BG = (255, 255, 255)
 
-
 def load_shield():
     icon = Image.open(SRC).convert("RGBA")
     bbox = icon.getbbox()
     return icon.crop(bbox)
-
 
 def render(width, height, fill_ratio):
     canvas = Image.new("RGB", (width, height), BG)
@@ -42,14 +40,12 @@ def render(width, height, fill_ratio):
     canvas.paste(on_white, (cx, cy))
     return canvas
 
-
 def main():
     render(164, 314, fill_ratio=0.55).save(LARGE, "BMP")
     render(55, 58, fill_ratio=0.85).save(SMALL, "BMP")
     for path in (LARGE, SMALL):
         size = os.path.getsize(path)
         print(f"{path.relative_to(ROOT)}: {size} bytes")
-
 
 if __name__ == "__main__":
     main()
