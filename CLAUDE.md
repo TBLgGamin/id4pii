@@ -8,14 +8,17 @@ A local PII layer for text — detect, redact, and **reversibly anonymize** — 
 
 It tags eight categories: `account_number`, `private_address`, `private_date`, `private_email`, `private_person`, `private_phone`, `private_url`, `secret`.
 
+Detection is **hybrid**: a fast compiled-regex pre-pass catches the structurally-regular PII and secrets (emails, URLs, phones, card/account numbers, dates, API keys) in one linear pass, those matches are masked out of the text, and only the *shortened* text is handed to the model — which then focuses on the context-dependent categories (people, addresses) it alone can do. Fewer tokens reach the expensive transformer, so detection is both faster and broader. See **Detection pipeline** below.
+
 Main use: sit **between your app and an LLM**. Swap real PII for realistic fake surrogates before the call, send the harmless text to the model, then swap the real values back into the response — the model never sees real data.
 
 ## Repo layout
 
 ```
 crates/
-  core/   id4pii-core      — ONNX inference, span decoding, redaction, anonymization, shared
-                             paths (data_root, model_dir, log_dir, vault_file)
+  core/   id4pii-core      — hybrid detection (detect/: regex pre-pass, ONNX model, masking,
+                             merge), span decoding, redaction, anonymization, shared paths
+                             (data_root, model_dir, log_dir, vault_file)
   app/    id4pii-app       — lib + two binaries:
                                id4pii         (CLI; scan / anonymize / deanonymize / serve /
                                               guard / install / uninstall / doctor; console
@@ -49,10 +52,25 @@ data_root/
 - Default model dir: `data_root/model/` (see above). Falls back to `./model` if it has files (legacy dev layout).
 - Override with `--model <dir>` or `ID4PII_MODEL`.
 - All entry points (`scan`, `anonymize`, `serve`, `guard`) call `model_setup::ensure_model` before `Detector::load`. If files are missing, the fetcher downloads `config.json`, `onnx/model_q4.onnx`, and `onnx/model_q4.onnx_data` from `huggingface.co/openai/privacy-filter/resolve/main/…`. Idempotent — sizes are HEAD-checked against the remote.
-- The tokenizer is **not** downloaded: id4pii embeds the `o200k_base` vocab via `tiktoken-rs`, which produces token ids identical to privacy-filter's own tokenizer (guarded by a regression test in `crates/core/src/detector.rs`).
-- id4pii feeds the model `input_ids` and `attention_mask`. If a run fails with an ONNX error naming a missing required input, that input name needs wiring into `crates/core/src/detector.rs`.
-- **Long inputs are windowed.** `Detector::detect` processes inputs at or below `DETECT_WINDOW` (1024) tokens in a single pass (byte-identical to feeding the whole text); longer inputs are split into overlapping windows (`DETECT_OVERLAP` = 128 tokens) and the per-window spans are stitched by `merge_overlapping` — same-category spans whose byte ranges strictly overlap are unioned. This keeps detection cost linear in length rather than quadratic and avoids depending on the model's context limit. Tune the consts in `detector.rs`. Without windowing, a large input (e.g. the guard reading a big focused field) runs one massive inference whose `heads × seq × seq` attention tensor balloons to tens of GB — and ONNX Runtime's arena retains that peak for the process lifetime, which is how the guard could sit at 20 GB+.
+- The tokenizer is **not** downloaded: id4pii embeds the `o200k_base` vocab via `tiktoken-rs`, which produces token ids identical to privacy-filter's own tokenizer (guarded by a regression test in `crates/core/src/detect/model.rs`).
+- id4pii feeds the model `input_ids` and `attention_mask`. If a run fails with an ONNX error naming a missing required input, that input name needs wiring into `crates/core/src/detect/model.rs`.
+- **Long inputs are windowed.** `ModelDetector::detect` processes inputs at or below `DETECT_WINDOW` (1024) tokens in a single pass (byte-identical to feeding the whole text); longer inputs are split into overlapping windows (`DETECT_OVERLAP` = 128 tokens) and the per-window spans are stitched by `merge_overlapping` — same-category spans whose byte ranges strictly overlap are unioned. This keeps detection cost linear in length rather than quadratic and avoids depending on the model's context limit. Tune the consts in `detect/model.rs`. Without windowing, a large input (e.g. the guard reading a big focused field) runs one massive inference whose `heads × seq × seq` attention tensor balloons to tens of GB — and ONNX Runtime's arena retains that peak for the process lifetime, which is how the guard could sit at 20 GB+.
+- **Inference is batched.** A single `run_and_decode` primitive pads a set of sequences to the longest, runs them as one batched `run` (batch dim, padding masked out so each row is independent), and decodes per row. The windows of one long input are fed in chunks of `MAX_BATCH` (4) instead of one `run` per window, and `detect_batch` batches *many texts* the same way (used by `serve` — see HTTP API). This amortizes the large fixed per-`run` cost (see next bullet). `MAX_BATCH` is small because each batch element carries its own up-to-1024-token attention, so peak memory grows with it.
+- **The fixed per-`run` cost dominates short inputs.** Measured: a 2-token and a 30-token inference both cost ~150–350 ms on CPU — i.e. the cost is per-`run` (graph execution / q4 weight dequant), not proportional to tokens, and not one-time (a warm-up `run` does *not* speed the next one, so there is no warm-up step). The levers that actually help are therefore batching (fewer `run`s) and a GPU provider; `with_memory_pattern(true)` and the CPU arena allocator are enabled but only trim the edges. I/O binding was investigated and skipped: the bottleneck is compute, not host allocation, so reusing buffers would not move it.
+- **Execution providers.** `Detector::load` registers, in order, any GPU provider compiled in (see features below) then the CPU provider (arena on), each with non-fatal registration — so a machine without the GPU/runtime silently falls back to CPU. Build with `cargo build --release --features directml` (Windows, any DirectX 12 GPU incl. integrated) or `--features cuda` to bundle a GPU provider; the default build is CPU-only and needs no GPU runtime. `ID4PII_CPU=1` forces CPU even in a GPU build (for A/B).
+- **Token byte-offsets are memoized.** Building the token→byte-offset table (needed to map spans back to the source) decodes each token's bytes; `ModelDetector` caches `token id → byte length` so the warm `serve`/guard request loop never re-decodes the same id twice.
 - **Intra-op threads are capped.** When `--threads` is `0` (the default), the ONNX session is built with `DEFAULT_INTRA_THREADS` (2), not the core count. ONNX Runtime's intra-op pool deadlocks under the many sequential `run` calls that windowed detection makes once the thread count is high (≥~4 on a 6-core box); 1–2 threads run reliably and the model is small enough that more threads add little. Spinning is also disabled (`with_intra_op_spinning(false)`). Pass `--threads N` to override.
+
+## Detection pipeline
+
+`Detector::detect` (in `crates/core/src/detect/mod.rs`) is a **hybrid** of two recognizers, and every entry point (`scan`, `anonymize`, `serve`, `guard`, the extension) goes through it unchanged — the public API is identical to before.
+
+1. **Regex pre-pass** (`detect/regex.rs`). All patterns are OR-ed into a *single* compiled `Regex` and scanned in one linear, backtrack-free pass; each pattern is wrapped in exactly one named capture group (inner groups are all non-capturing) so the capture index maps directly to a category in `O(1)`. The engine is built once behind a `OnceLock` and shared process-wide. Patterns are RE2-compatible (the `regex` crate rejects look-around / back-references) and cover email, URL, phone, IBAN / card / SSN, dates, and a broad secret set (AWS/GitHub/Google/Slack/Stripe/OpenAI keys, JWTs, PEM private-key blocks, bearer tokens). Card numbers are gated by a **Luhn** check so a bad match never masks real text out from under the model. Regex hits are reported with confidence `1.0`.
+2. **Masking** (`detect/mask.rs`). Each regex hit is replaced by a single-space sentinel, which shrinks the token count the transformer must process while preserving word boundaries. A segment map records the `gap → sentinel → gap …` layout so `map_start`/`map_end` translate model span offsets back to the original document in `O(log segments)`.
+3. **Model** (`detect/model.rs`). The ONNX `ModelDetector` runs over the *masked* (shorter) text — see **Model** above for windowing/threads/offset-cache details.
+4. **Merge** (`combine` in `detect/mod.rs`). Model spans are remapped to original coordinates; any model span overlapping a regex hit is dropped (regex wins); the union is sorted and same-category overlaps are merged by `merge_overlapping`.
+
+If the regex pre-pass finds nothing, the model runs directly on the original text (no masking overhead). Set `ID4PII_REGEX=0` (or `false`) to disable the pre-pass and run the model over the full text — used for A/B latency comparison; `Detector::detect_model_only` exposes the same path programmatically. The pure regex pre-pass is also exported as `id4pii_core::regex_scan(text)` for callers/benches that want the cheap structural matches without a model.
 
 ## CLI
 
@@ -92,6 +110,8 @@ id4pii serve --addr 127.0.0.1:8080
 - `POST /deanonymize` — `{"text": "...", "vault": [...]}` → `{"text": "..."}`
 
 `min_score` is optional per request; when omitted it falls back to the server default set with `serve --min-score`.
+
+The model runs on a single dedicated thread fed by a queue: each handler submits its text and awaits a one-shot reply, and the thread drains all requests currently queued (up to `MAX_REQUEST_BATCH` = 16) into one batched inference (`Detector::detect_batch`). Requests that arrive while an inference is in flight naturally form the next batch, so concurrent load is coalesced with no added latency for a lone request. `min_score` is applied per request after detection, so requests with different thresholds still share a batch.
 
 ## Guard — system-wide hotkey (Windows)
 
@@ -212,13 +232,46 @@ Measured on a Ryzen 5 9600X with the `model_q4` variant:
 
 The tokenizer is embedded and loads in ~85 ms (in parallel with the ONNX session), so a cold CLI run is dominated by model load and one inference pass. For repeated or latency-sensitive use, `serve` still wins decisively — the model loads once and each request is just inference. Set `RUST_LOG=id4pii_core=debug` to see per-phase load timings.
 
-Long inputs no longer blow up latency: windowed detection (see Model) keeps inference cost linear in token count instead of the model's quadratic attention. The pure hot functions have a criterion bench harness:
+**The regex pre-pass is the main detection speedup.** Because the model's attention cost grows super-linearly with token count, masking the regex-found PII out of the text before inference both removes redundant work and shrinks the sequence. Measured on a PII-dense ~370-token document (`scan -f`, same binary/model, `RUST_LOG=id4pii_core=debug`, comparing the `inference complete tokens=… elapsed=…` line):
+
+| | Tokens fed to model | Warm inference |
+|---|---|---|
+| `ID4PII_REGEX=0` (model only) | 366 | ~1.27 s |
+| default (hybrid) | 191 | ~0.76 s |
+
+That is **48% fewer tokens → ~40% lower inference time**, and detection is *broader* (the regex pre-pass caught an extra phone and secret the model missed: 22 vs 20 spans). The win grows with PII density and input length because of the quadratic attention term. The pre-pass itself is single-digit microseconds (`regex_scan_pii_heavy` ≈ 6.5 µs) — negligible next to inference.
+
+Long inputs no longer blow up latency either: windowed detection (see Model) keeps inference cost linear in token count instead of the model's quadratic attention.
+
+`deanonymize` buckets vault pairs by first byte into a flat 256-slot table (plain array indexing, no per-position hashing), so restore is roughly linear in text length even as the shared guard vault grows large.
+
+## Benchmark & evaluation suite
+
+Speed and correctness are measured against a committed, labelled corpus rather than ad-hoc strings — see `crates/core/data/README.md` (1500 synthetic examples from Microsoft Presidio-research, MIT, byte-offset span labels, regenerate with `python scripts/fetch-pii-dataset.py`). The loader (`id4pii_core::eval::load_tsv`) is a lean single-pass TSV reader; scoring (`eval::evaluate` / `Report`) is type-aware overlap precision/recall/F1 that treats out-of-schema `other` spans as don't-care so the engine is not penalized for entity types it does not target.
+
+**Speed** — one criterion suite, one group per engine area, all run over the corpus:
 
 ```sh
-cargo bench -p id4pii-core        # deanonymize (bucketed restore) + anonymize_with_subs
+cargo bench -p id4pii-core        # benches/engine.rs
+#   parse/load_tsv            — TSV loader throughput (MB/s)
+#   detect_regex/…_corpus     — regex pre-pass over every example (MB/s)
+#   anonymize/…_corpus        — anonymize_with_subs over gold spans
+#   deanonymize/…_corpus      — restore the whole corpus against one shared vault
+#   scaling/…                 — fixed-size synthetic regression guards
 ```
 
-`deanonymize` buckets vault pairs by first byte, so restore is roughly linear in text length even as the shared guard vault grows large.
+**Correctness + model A/B** — an example that prints per-category P/R/F1 and, when the model is present, compares model-only vs hybrid on accuracy and wall-clock:
+
+```sh
+cargo run --release --example evaluate -p id4pii-core
+```
+
+It always reports the regex pre-pass scores and the token reduction masking buys the model; with the model present it adds model-only and hybrid tables plus a speed/F1 summary. A model-free CI test (`crates/core/tests/regex_eval.rs`) asserts the regex pre-pass F1 on its target categories stays above a floor.
+
+Representative results (Ryzen 5 9600X, `model_q4`):
+
+- **Regex pre-pass** over the full 1500-example corpus: 99.4% precision overall, 100% F1 on email/URL, 95.3% on account numbers — at ~98k examples/s. (Recall is "low" only because person/address, 75% of gold spans, have no regex coverage by design.)
+- **Hybrid vs model-only** (sample): overall F1 **81.4% → 84.7%** and detection **1.30× faster** — the regex pre-pass is both more accurate (exact account/phone/URL matching) *and* cheaper. On PII-dense input the speed gap is far larger (≈40%, see above); on this general corpus regex masks ~6% of tokens, so the corpus-wide speedup is smaller but still net-positive with a correctness gain.
 
 ## Development loop
 
@@ -226,7 +279,7 @@ cargo bench -p id4pii-core        # deanonymize (bucketed restore) + anonymize_w
 cargo test --workspace
 cargo fmt --all
 cargo clippy --all-targets
-cargo bench -p id4pii-core        # optional: hot-path benches
+cargo bench -p id4pii-core        # optional: engine benchmark suite over the labelled corpus
 ```
 
 Building the app crate requires a `.env` at the repo root (see `CONTRIBUTING.md`). Core can be tested standalone (`cargo test -p id4pii-core`) without `.env`.
