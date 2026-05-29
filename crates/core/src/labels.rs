@@ -30,6 +30,13 @@ impl Category {
         }
     }
 
+    /// Parse a `snake_case` category name (e.g. `private_email`) back into a [`Category`].
+    /// Returns `None` for unknown names — the inverse of [`Category::as_str`].
+    #[must_use]
+    pub fn from_snake(raw: &str) -> Option<Self> {
+        Self::from_raw(raw)
+    }
+
     fn from_raw(raw: &str) -> Option<Self> {
         Some(match raw {
             "account_number" => Self::AccountNumber,

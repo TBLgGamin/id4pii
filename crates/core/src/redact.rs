@@ -1,4 +1,4 @@
-use crate::detector::PiiSpan;
+use crate::detect::PiiSpan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedactStyle {

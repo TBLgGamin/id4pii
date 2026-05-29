@@ -9,17 +9,25 @@ repository.workspace = true
 [dependencies]
 ort.workspace = true
 tiktoken-rs.workspace = true
+regex.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
+[features]
+# Opt-in GPU execution providers. Off by default so the standard build stays CPU-only and needs
+# no GPU runtime; when enabled, the matching provider is tried first and falls back to CPU.
+cuda = ["ort/cuda"]
+directml = ["ort/directml"]
+
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+tiktoken-rs.workspace = true
 
 [[bench]]
-name = "anonymize"
+name = "engine"
 harness = false
 
 [lints]

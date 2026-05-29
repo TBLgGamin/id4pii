@@ -7,8 +7,9 @@
 )]
 
 mod anonymize;
-mod detector;
+mod detect;
 mod error;
+pub mod eval;
 mod labels;
 pub mod model_dir;
 pub mod model_fetch;
@@ -19,7 +20,7 @@ pub use anonymize::{
     Rng, Vault, VaultEntry, anonymize, anonymize_into, anonymize_with_subs, deanonymize,
     warm_up_pools,
 };
-pub use detector::{Detector, PiiSpan};
+pub use detect::{Detector, PiiSpan, regex_scan};
 pub use error::{Error, Result};
 pub use labels::Category;
 pub use redact::{RedactStyle, redact};

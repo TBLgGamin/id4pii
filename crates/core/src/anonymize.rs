@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::detector::PiiSpan;
+use crate::detect::PiiSpan;
 use crate::labels::Category;
 
 const FORENAMES_TSV: &str = include_str!("../assets/forenames.tsv");
@@ -276,29 +276,30 @@ pub fn anonymize_with_subs(
 
 #[must_use]
 pub fn deanonymize(text: &str, vault: &Vault) -> String {
-    let mut buckets: std::collections::HashMap<u8, Vec<(&str, &str)>> =
-        std::collections::HashMap::new();
+    // Bucket surrogates by their first byte into a flat 256-slot table. Indexing by byte is a
+    // plain array access — no hashing — which matters because the scan loop below probes a
+    // bucket at *every* position in the text; a `HashMap<u8, _>` hashed the key each time.
+    let mut buckets: Vec<Vec<(&str, &str)>> = Vec::new();
+    buckets.resize_with(256, Vec::new);
     for entry in &vault.entries {
         let fake = entry.fake.as_str();
         if let Some(&first) = fake.as_bytes().first() {
-            buckets
-                .entry(first)
-                .or_default()
-                .push((fake, entry.real.as_str()));
+            buckets[first as usize].push((fake, entry.real.as_str()));
         }
     }
-    for candidates in buckets.values_mut() {
-        candidates.sort_by_key(|(fake, _)| std::cmp::Reverse(fake.len()));
+    // Longest surrogate first so a fake that is a prefix of another never shadows it.
+    for candidates in &mut buckets {
+        if candidates.len() > 1 {
+            candidates.sort_by_key(|(fake, _)| std::cmp::Reverse(fake.len()));
+        }
     }
 
     let mut result = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(&first) = rest.as_bytes().first() {
-        let matched = buckets.get(&first).and_then(|candidates| {
-            candidates
-                .iter()
-                .find_map(|(fake, real)| rest.strip_prefix(fake).map(|stripped| (*real, stripped)))
-        });
+        let matched = buckets[first as usize]
+            .iter()
+            .find_map(|(fake, real)| rest.strip_prefix(fake).map(|stripped| (*real, stripped)));
         if let Some((real, stripped)) = matched {
             result.push_str(real);
             rest = stripped;
