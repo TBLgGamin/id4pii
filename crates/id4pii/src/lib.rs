@@ -27,6 +27,7 @@ pub mod document;
 pub mod install;
 pub mod logging;
 pub mod model_setup;
+mod ops;
 pub mod progress;
 pub mod serve;
 

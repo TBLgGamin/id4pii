@@ -1,12 +1,9 @@
-use std::io::Read;
 use std::path::PathBuf;
 
-use crate::{PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, model_dir, redact};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde::Serialize;
 
-use crate::{corpus, logging, model_setup, serve};
+use crate::{RedactStyle, corpus, logging, model_dir, ops, serve};
 #[cfg(windows)]
 use crate::{daemon, install};
 
@@ -23,9 +20,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Scan(ScanArgs),
-    Anonymize(AnonymizeArgs),
-    Deanonymize(DeanonymizeArgs),
+    Scan(ops::ScanArgs),
+    Anonymize(ops::AnonymizeArgs),
+    Deanonymize(ops::DeanonymizeArgs),
     Corpus(corpus::CorpusArgs),
     Serve(ServeArgs),
     #[cfg(windows)]
@@ -38,6 +35,7 @@ enum Command {
     Doctor(install::DoctorArgs),
 }
 
+/// Shared model-loading flags, flattened into every model-backed subcommand.
 #[derive(Args, Debug)]
 pub(crate) struct ModelArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value_os_t = model_dir::default_dir())]
@@ -51,43 +49,6 @@ pub(crate) struct ModelArgs {
 }
 
 #[derive(Args, Debug)]
-struct ScanArgs {
-    text: Option<String>,
-    #[arg(short, long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    redact: bool,
-    #[arg(long, value_enum, default_value_t = Style::Label)]
-    style: Style,
-    #[arg(long, value_enum, default_value_t = Format::Json)]
-    format: Format,
-    #[command(flatten)]
-    model: ModelArgs,
-}
-
-#[derive(Args, Debug)]
-struct AnonymizeArgs {
-    text: Option<String>,
-    #[arg(short, long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    seed: Option<u64>,
-    #[arg(long)]
-    vault_out: Option<PathBuf>,
-    #[command(flatten)]
-    model: ModelArgs,
-}
-
-#[derive(Args, Debug)]
-struct DeanonymizeArgs {
-    text: Option<String>,
-    #[arg(short, long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    vault: PathBuf,
-}
-
-#[derive(Args, Debug)]
 struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1:8080")]
     addr: String,
@@ -95,6 +56,7 @@ struct ServeArgs {
     model: ModelArgs,
 }
 
+/// Redaction style, shared by `scan` and `corpus`.
 #[derive(Clone, Copy, ValueEnum, Debug)]
 pub(crate) enum Style {
     Label,
@@ -112,26 +74,14 @@ impl From<Style> for RedactStyle {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum, Debug)]
-enum Format {
-    Json,
-    Text,
-}
-
-#[derive(Serialize)]
-struct AnonymizeOutput {
-    anonymized: String,
-    vault: Vault,
-}
-
 #[tokio::main]
 pub async fn run() -> Result<()> {
     logging::init_cli();
 
     match Cli::parse().command {
-        Command::Scan(args) => run_scan(&args),
-        Command::Anonymize(args) => run_anonymize(&args),
-        Command::Deanonymize(args) => run_deanonymize(&args),
+        Command::Scan(args) => ops::scan(&args),
+        Command::Anonymize(args) => ops::anonymize(&args),
+        Command::Deanonymize(args) => ops::deanonymize(&args),
         Command::Corpus(args) => corpus::run(&args),
         Command::Serve(args) => {
             serve::run(
@@ -151,95 +101,6 @@ pub async fn run() -> Result<()> {
         Command::Uninstall(args) => install::run_uninstall(&args),
         #[cfg(windows)]
         Command::Doctor(args) => install::run_doctor(&args),
-    }
-}
-
-fn run_scan(args: &ScanArgs) -> Result<()> {
-    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
-    let mut detector = model_setup::load_detector(
-        &args.model.model,
-        &args.model.model_file,
-        args.model.threads,
-    )?;
-    let spans = detector
-        .detect(&text, args.model.min_score)
-        .context("detection failed")?;
-
-    if args.redact {
-        println!("{}", redact(&text, &spans, args.style.into()));
-        return Ok(());
-    }
-
-    match args.format {
-        Format::Json => println!("{}", serde_json::to_string_pretty(&spans)?),
-        Format::Text => print_text(&spans),
-    }
-    Ok(())
-}
-
-fn run_anonymize(args: &AnonymizeArgs) -> Result<()> {
-    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
-    let mut detector = model_setup::load_detector(
-        &args.model.model,
-        &args.model.model_file,
-        args.model.threads,
-    )?;
-    let spans = detector
-        .detect(&text, args.model.min_score)
-        .context("detection failed")?;
-
-    let mut rng = args.seed.map_or_else(Rng::from_entropy, Rng::new);
-    let (anonymized, vault) = anonymize(&text, &spans, &mut rng);
-
-    if let Some(path) = &args.vault_out {
-        std::fs::write(path, serde_json::to_string_pretty(&vault)?)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        println!("{anonymized}");
-    } else {
-        let output = AnonymizeOutput { anonymized, vault };
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    }
-    Ok(())
-}
-
-fn run_deanonymize(args: &DeanonymizeArgs) -> Result<()> {
-    let text = read_input(args.text.as_ref(), args.file.as_ref())?;
-    let vault_text = std::fs::read_to_string(&args.vault)
-        .with_context(|| format!("failed to read {}", args.vault.display()))?;
-    let vault: Vault = serde_json::from_str(&vault_text).context("invalid vault file")?;
-    println!("{}", deanonymize(&text, &vault));
-    Ok(())
-}
-
-fn read_input(text: Option<&String>, file: Option<&PathBuf>) -> Result<String> {
-    if let Some(text) = text {
-        return Ok(text.clone());
-    }
-    if let Some(path) = file {
-        return std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()));
-    }
-    let mut buffer = String::new();
-    std::io::stdin()
-        .read_to_string(&mut buffer)
-        .context("failed to read stdin")?;
-    Ok(buffer)
-}
-
-fn print_text(spans: &[PiiSpan]) {
-    if spans.is_empty() {
-        println!("no PII detected");
-        return;
-    }
-    for span in spans {
-        println!(
-            "{:<16} [{}..{}] score={:.3}  {}",
-            span.category.as_str(),
-            span.start,
-            span.end,
-            span.score,
-            span.text
-        );
     }
 }
 
