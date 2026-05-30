@@ -25,7 +25,7 @@ use self::engine::{Engine, EngineConfig};
 use self::store::DpapiStore;
 
 #[derive(Args, Debug)]
-pub(crate) struct GuardArgs {
+pub(crate) struct DaemonArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value_os_t = crate::model_dir::default_dir())]
     pub(crate) model: PathBuf,
     #[arg(long, default_value = crate::model_dir::DEFAULT_MODEL_FILE)]
@@ -45,7 +45,7 @@ pub(crate) struct GuardArgs {
 }
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn run(args: &GuardArgs) -> Result<()> {
+pub(crate) fn run(args: &DaemonArgs) -> Result<()> {
     let progress_bar = crate::progress::install_bar();
 
     std::thread::Builder::new()
@@ -125,10 +125,10 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     };
     let bridge_item = MenuItem::new(bridge_label, false, None);
     let log_dir = crate::paths::log_dir();
-    let log_file_path = log_dir.as_ref().map(|d| d.join("guard.log"));
+    let log_file_path = log_dir.as_ref().map(|d| d.join("daemon.log"));
     let show_log_item = MenuItem::new("Open log file", log_file_path.is_some(), None);
     let open_log_folder_item = MenuItem::new("Open log folder", log_dir.is_some(), None);
-    let quit_item = MenuItem::new("Quit id4pii guard", true, None);
+    let quit_item = MenuItem::new("Quit id4pii daemon", true, None);
     menu.append(&bridge_item)
         .context("failed to build the tray menu")?;
     menu.append(&PredefinedMenuItem::separator())
@@ -142,10 +142,11 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     menu.append(&quit_item)
         .context("failed to build the tray menu")?;
     let tooltip = if args.no_bridge {
-        "id4pii guard — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo".to_string()
+        "id4pii daemon — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo"
+            .to_string()
     } else {
         format!(
-            "id4pii guard — Ctrl+Shift+A/Z/U, browser bridge on :{}",
+            "id4pii daemon — Ctrl+Shift+A/Z/U, browser bridge on :{}",
             args.bridge_port
         )
     };
@@ -159,7 +160,9 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
     let hotkey_events = GlobalHotKeyEvent::receiver();
     let menu_events = MenuEvent::receiver();
 
-    info!("id4pii guard running — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo");
+    info!(
+        "id4pii daemon running — Ctrl+Shift+A anonymize, Ctrl+Shift+Z restore, Ctrl+Shift+U undo"
+    );
 
     let mut event_loop = event_loop;
     let loop_tx = command_tx.clone();

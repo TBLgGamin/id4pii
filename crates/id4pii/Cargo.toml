@@ -15,8 +15,8 @@ name = "id4pii"
 path = "src/main.rs"
 
 [[bin]]
-name = "id4pii-guard"
-path = "src/bin/id4pii_guard.rs"
+name = "id4pii-daemon"
+path = "src/bin/id4pii_daemon.rs"
 
 [features]
 

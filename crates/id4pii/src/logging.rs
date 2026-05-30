@@ -18,14 +18,14 @@ pub fn init_cli() {
         .init();
 }
 
-pub fn init_guard(also_stderr: bool) -> Result<PathBuf> {
+pub fn init_daemon(also_stderr: bool) -> Result<PathBuf> {
     let dir =
         crate::paths::log_dir().context("could not resolve the id4pii data directory for logs")?;
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
 
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
-        .filename_prefix("guard")
+        .filename_prefix("daemon")
         .filename_suffix("log")
         .max_log_files(7)
         .build(&dir)

@@ -19,9 +19,9 @@ mod redact;
 
 pub mod batch;
 pub mod cli;
-pub mod extract;
 #[cfg(windows)]
-pub mod guard;
+pub mod daemon;
+pub mod extract;
 #[cfg(windows)]
 pub mod install;
 pub mod logging;

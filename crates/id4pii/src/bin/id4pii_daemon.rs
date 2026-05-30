@@ -2,11 +2,11 @@
 
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
-    id4pii::cli::run_guard_bin()
+    id4pii::cli::run_daemon_bin()
 }
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("id4pii-guard runs only on Windows.");
+    eprintln!("id4pii-daemon runs only on Windows.");
     std::process::exit(1);
 }

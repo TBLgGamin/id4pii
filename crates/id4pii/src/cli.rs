@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::{batch, logging, model_setup, serve};
 #[cfg(windows)]
-use crate::{guard, install};
+use crate::{daemon, install};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,7 +31,7 @@ enum Command {
     Batch(batch::BatchArgs),
     Serve(ServeArgs),
     #[cfg(windows)]
-    Guard(guard::GuardArgs),
+    Daemon(daemon::DaemonArgs),
     #[cfg(windows)]
     Install(install::InstallArgs),
     #[cfg(windows)]
@@ -146,7 +146,7 @@ pub async fn run() -> Result<()> {
             .await
         }
         #[cfg(windows)]
-        Command::Guard(args) => guard::run(&args),
+        Command::Daemon(args) => daemon::run(&args),
         #[cfg(windows)]
         Command::Install(args) => install::run_install(&args),
         #[cfg(windows)]
@@ -251,19 +251,15 @@ fn print_text(spans: &[PiiSpan]) {
 
 #[cfg(windows)]
 #[derive(Parser, Debug)]
-#[command(
-    name = "id4pii-guard",
-    version,
-    about = "id4pii guard daemon (system tray)"
-)]
-struct GuardBin {
+#[command(name = "id4pii-daemon", version, about = "id4pii daemon (system tray)")]
+struct DaemonBin {
     #[command(flatten)]
-    args: guard::GuardArgs,
+    args: daemon::DaemonArgs,
 }
 
 #[cfg(windows)]
-pub fn run_guard_bin() -> Result<()> {
-    let bin = GuardBin::parse();
-    let _log_dir = logging::init_guard(bin.args.dev_extensions)?;
-    guard::run(&bin.args)
+pub fn run_daemon_bin() -> Result<()> {
+    let bin = DaemonBin::parse();
+    let _log_dir = logging::init_daemon(bin.args.dev_extensions)?;
+    daemon::run(&bin.args)
 }

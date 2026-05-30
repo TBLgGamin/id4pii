@@ -57,7 +57,7 @@ pub(crate) fn run_install(args: &InstallArgs) -> Result<()> {
         eprintln!("id4pii: registered Chrome extension {id} for next launch.");
     }
     if args.autostart {
-        let exe = resolve_guard_exe(args.exe_path.as_ref())?;
+        let exe = resolve_daemon_exe(args.exe_path.as_ref())?;
         register_autostart(&exe)?;
         eprintln!("id4pii: autostart registered at {RUN_KEY}\\{RUN_VALUE}.");
     }
@@ -155,13 +155,13 @@ fn remove_autostart() {
     let _ = reg_delete_value(HKCU, RUN_KEY, RUN_VALUE);
 }
 
-fn resolve_guard_exe(provided: Option<&PathBuf>) -> Result<PathBuf> {
+fn resolve_daemon_exe(provided: Option<&PathBuf>) -> Result<PathBuf> {
     if let Some(path) = provided {
         return Ok(path.clone());
     }
     let here = std::env::current_exe().context("resolve current_exe")?;
     let dir = here.parent().context("current_exe has no parent")?;
-    Ok(dir.join("id4pii-guard.exe"))
+    Ok(dir.join("id4pii-daemon.exe"))
 }
 
 fn reg_add(root: &str, key: &str, value: &str, kind: &str, data: &str) -> Result<()> {
