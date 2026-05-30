@@ -15,3 +15,7 @@ e2e_batch.jsonl
 e2e_batch.err
 e2e_*.txt
 e2e_*.jsonl
+
+# python
+__pycache__/
+*.pyc
