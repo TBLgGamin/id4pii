@@ -46,10 +46,10 @@ crates/id4pii/
     redact.rs                label / block / char masking (irreversible)
     labels.rs eval.rs        category map; labelled-corpus precision/recall/F1 scoring
     paths.rs model_dir.rs model_fetch.rs error.rs   one path source-of-truth, model fetch, errors
-    detector_service.rs      ONE Detector on ONE thread; serve + batch share it
-    cli.rs main.rs           subcommand dispatch (scan/anonymize/deanonymize/batch/serve/daemon/…)
+    detector_service.rs      ONE Detector on ONE thread; serve + corpus share it
+    cli.rs main.rs           subcommand dispatch (scan/anonymize/deanonymize/corpus/serve/daemon/…)
     serve.rs                 HTTP API over the shared service (coalescing)
-    batch.rs                 streaming corpus pipeline over the shared service (FIFO)
+    corpus.rs                streaming corpus pipeline over the shared service (FIFO)
     document.rs              same-shape file anonymization (OOXML/PDF plan -> rewrite)
     model_setup.rs           load_detector() = ensure_model + Detector::load (used everywhere)
     install.rs logging.rs progress.rs
@@ -103,7 +103,7 @@ does the same programmatically. `regex_scan(text)` exposes the pre-pass alone.
 
 There are exactly two public methods — `Detector::detect(text)` and
 `Detector::detect_batch(texts)` — and `detect` is just `detect_batch` of one.
-`detect_batch` is the single smart path used by `scan`, `serve`, `batch`, and
+`detect_batch` is the single smart path used by `scan`, `serve`, `corpus`, and
 the daemon:
 
 - **Windowing.** Inputs ≤ `DETECT_WINDOW` (1024) tokens are one window
@@ -114,7 +114,7 @@ the daemon:
   `CPU_BATCH_CAP` 16 / `GPU_WINDOW_BATCH` 32). Long windows run few-at-a-time
   (bounding the `heads × seq × seq` attention tensor — the old fixed `MAX_BATCH`=4
   behaviour at 1024 tokens); short ones pack densely to amortise the fixed
-  per-`run` cost. `set_batch_override(Some(n))` (the `batch --batch` flag) pins
+  per-`run` cost. `set_batch_override(Some(n))` (the `corpus --batch` flag) pins
   it; the default is adaptive. Output is independent of window order and batch
   composition (padding is masked, each row decodes in isolation).
 - **Execution providers.** `Detector::load` registers any compiled-in GPU
@@ -145,14 +145,14 @@ serialized**, so the on-disk format is unchanged.
 
 All five are thin adapters over the same engine.
 
-- **CLI** (`cli.rs`): `scan` / `anonymize` / `deanonymize` / `batch` / `serve` /
+- **CLI** (`cli.rs`): `scan` / `anonymize` / `deanonymize` / `corpus` / `serve` /
   `daemon` / `install` / `uninstall` / `doctor`. Shared `ModelArgs`
   (`--model`/`--model-file`/`--threads`/`--min-score`).
 - **HTTP** (`serve.rs`): `GET /health`, `POST /scan|/anonymize|/deanonymize`.
   Runs the model on the shared `DetectorService` with `Coalesce::UpTo(16)` —
   concurrent requests coalesce into one batched run with no added latency for a
   lone request. Submits at `min_score = 0.0` and filters per request.
-- **Corpus** (`batch.rs`): a streaming reader → `DetectorService` (`Coalesce::Off`)
+- **Corpus** (`corpus.rs`): a streaming reader → `DetectorService` (`Coalesce::Off`)
   → writer pipeline over arbitrarily large inputs (files / jsonl / lines / tsv).
   One shared vault across the run; bounded channels cap memory.
 - **Daemon** (`daemon/`): a single-threaded `Command`→`Event` state machine that
@@ -180,7 +180,7 @@ one-line reason.
   `heads × seq × seq` attention tensor to tens of GB, and ORT's arena retains that
   peak for the process lifetime (the documented 20 GB+ failure). Preventing the
   giant run matters more than freeing after it.
-- **The small-text path is byte-for-byte unchanged by batching.** `batch --op scan`
+- **The small-text path is byte-for-byte unchanged by batching.** `corpus --op scan`
   must equal per-text `scan`; keep that cross-surface equality test.
 - **Restoration is exact string match.** If an LLM rewrites a surrogate (truncates
   a name, splits an email) that fragment won't restore; if a surrogate coincides
@@ -203,7 +203,7 @@ one-line reason.
   counts, kinds, durations, and the `reqId`. A derived `Debug` on `Vault` would
   leak PII into logs.
 - **Coalesced detector jobs share a threshold by construction** (`serve` submits
-  0.0 and filters afterwards; `batch` uses `Coalesce::Off`). Don't submit mixed
+  0.0 and filters afterwards; `corpus` uses `Coalesce::Off`). Don't submit mixed
   `min_score`s under `Coalesce::UpTo`.
 
 ## Decisions & tradeoffs (and roads not taken)
@@ -214,7 +214,7 @@ one-line reason.
 - **Adaptive token-budget batching, not a fixed batch size.** Subsumes the old
   per-request `MAX_BATCH`=4 and corpus `--batch` defaults; bounds memory on long
   windows while packing short ones.
-- **`serve` coalesces, `batch` streams.** Coalescing is a latency win for
+- **`serve` coalesces, `corpus` streams.** Coalescing is a latency win for
   concurrent requests; the corpus path deliberately does *not* coalesce, because
   its shard-at-a-time backpressure is what bounds memory on a multi-GB corpus and
   keeps shared-vault surrogate minting in record order.

@@ -28,13 +28,13 @@ fn without_bom(text: String) -> String {
 }
 
 #[derive(Args, Debug)]
-pub struct BatchArgs {
+pub struct CorpusArgs {
     #[arg(short, long)]
     input: Option<PathBuf>,
     #[arg(short, long)]
     output: Option<PathBuf>,
-    #[arg(long, value_enum, default_value_t = BatchOp::Anonymize)]
-    op: BatchOp,
+    #[arg(long, value_enum, default_value_t = CorpusOp::Anonymize)]
+    op: CorpusOp,
     #[arg(long, value_enum, default_value_t = CorpusFormat::Auto)]
     format: CorpusFormat,
     #[arg(long)]
@@ -58,7 +58,7 @@ pub struct BatchArgs {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum, Debug)]
-pub enum BatchOp {
+pub enum CorpusOp {
     Anonymize,
     Scan,
     Redact,
@@ -95,7 +95,7 @@ struct ScanLine<'a> {
     spans: &'a [PiiSpan],
 }
 
-pub(crate) fn run(args: &BatchArgs) -> Result<()> {
+pub(crate) fn run(args: &CorpusArgs) -> Result<()> {
     let kind = resolve_format(args);
     let mut detector = model_setup::load_detector(
         &args.model.model,
@@ -155,7 +155,7 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
     sink.finish()?;
 
     let entries = vault.len();
-    if matches!(args.op, BatchOp::Anonymize)
+    if matches!(args.op, CorpusOp::Anonymize)
         && let Some(path) = &args.vault_out
     {
         let vault = vault.into_vault();
@@ -163,7 +163,7 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
             .with_context(|| format!("failed to write {}", path.display()))?;
     }
     tracing::info!(docs, vault_entries = entries, "batch complete");
-    eprintln!("id4pii batch: processed {docs} documents, {entries} vault entries");
+    eprintln!("id4pii corpus: processed {docs} documents, {entries} vault entries");
     Ok(())
 }
 
@@ -211,7 +211,7 @@ fn submit_shard(
 }
 
 struct RenderCtx<'a> {
-    op: BatchOp,
+    op: CorpusOp,
     kind: Kind,
     field: &'a str,
     style: RedactStyle,
@@ -225,12 +225,12 @@ fn render(
     rng: &mut Rng,
 ) -> Result<String> {
     match ctx.op {
-        BatchOp::Scan => Ok(serde_json::to_string(&ScanLine {
+        CorpusOp::Scan => Ok(serde_json::to_string(&ScanLine {
             id: &record.id,
             spans,
         })?),
-        BatchOp::Redact => frame(ctx, record, redact(&record.text, spans, ctx.style)),
-        BatchOp::Anonymize => {
+        CorpusOp::Redact => frame(ctx, record, redact(&record.text, spans, ctx.style)),
+        CorpusOp::Anonymize => {
             let text = anonymize_into(&record.text, spans, rng, vault);
             frame(ctx, record, text)
         }
@@ -282,7 +282,7 @@ impl Sink {
     }
 }
 
-fn resolve_format(args: &BatchArgs) -> Kind {
+fn resolve_format(args: &CorpusArgs) -> Kind {
     match args.format {
         CorpusFormat::Files => return Kind::Files,
         CorpusFormat::Jsonl => return Kind::Jsonl,
@@ -303,7 +303,7 @@ fn resolve_format(args: &BatchArgs) -> Kind {
     }
 }
 
-fn build_source(args: &BatchArgs, kind: Kind) -> Result<Source> {
+fn build_source(args: &CorpusArgs, kind: Kind) -> Result<Source> {
     if kind == Kind::Files {
         let root = args
             .input
@@ -355,7 +355,7 @@ fn build_source(args: &BatchArgs, kind: Kind) -> Result<Source> {
     }))
 }
 
-fn build_sink(args: &BatchArgs, kind: Kind) -> Result<Sink> {
+fn build_sink(args: &CorpusArgs, kind: Kind) -> Result<Sink> {
     if kind == Kind::Files {
         let root = args
             .output
@@ -513,7 +513,7 @@ impl<R: BufRead> Iterator for LineSource<R> {
 mod tests {
     use super::{Kind, LineKind, LineSource, Record, RenderCtx, frame};
     use crate::RedactStyle;
-    use crate::batch::BatchOp;
+    use crate::corpus::CorpusOp;
     use serde_json::{Value, json};
 
     fn collect(kind: LineKind, input: &str) -> Vec<Record> {
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn frame_reinjects_anonymized_text_into_json_envelope() {
         let ctx = RenderCtx {
-            op: BatchOp::Anonymize,
+            op: CorpusOp::Anonymize,
             kind: Kind::Jsonl,
             field: "text",
             style: RedactStyle::Label,
@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn frame_passthrough_for_non_json_formats() {
         let ctx = RenderCtx {
-            op: BatchOp::Redact,
+            op: CorpusOp::Redact,
             kind: Kind::Lines,
             field: "text",
             style: RedactStyle::Label,

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
-use crate::{batch, logging, model_setup, serve};
+use crate::{corpus, logging, model_setup, serve};
 #[cfg(windows)]
 use crate::{daemon, install};
 
@@ -26,7 +26,7 @@ enum Command {
     Scan(ScanArgs),
     Anonymize(AnonymizeArgs),
     Deanonymize(DeanonymizeArgs),
-    Batch(batch::BatchArgs),
+    Corpus(corpus::CorpusArgs),
     Serve(ServeArgs),
     #[cfg(windows)]
     Daemon(daemon::DaemonArgs),
@@ -132,7 +132,7 @@ pub async fn run() -> Result<()> {
         Command::Scan(args) => run_scan(&args),
         Command::Anonymize(args) => run_anonymize(&args),
         Command::Deanonymize(args) => run_deanonymize(&args),
-        Command::Batch(args) => batch::run(&args),
+        Command::Corpus(args) => corpus::run(&args),
         Command::Serve(args) => {
             serve::run(
                 args.addr,

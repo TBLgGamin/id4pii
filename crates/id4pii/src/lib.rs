@@ -17,8 +17,8 @@ pub mod model_fetch;
 pub mod paths;
 mod redact;
 
-pub mod batch;
 pub mod cli;
+pub mod corpus;
 #[cfg(windows)]
 pub mod daemon;
 mod detector_service;
