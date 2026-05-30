@@ -19,7 +19,9 @@ const DETECT_WINDOW: usize = 1024;
 
 const DETECT_OVERLAP: usize = 128;
 
-const MAX_BATCH: usize = 4;
+const TOKEN_BUDGET: usize = 4096;
+
+const CPU_BATCH_CAP: usize = 16;
 
 const GPU_WINDOW_BATCH: usize = 32;
 
@@ -129,14 +131,6 @@ impl ModelDetector {
         })
     }
 
-    pub(crate) fn recommended_window_batch(&self) -> usize {
-        if self.bucket_shapes {
-            GPU_WINDOW_BATCH
-        } else {
-            MAX_BATCH
-        }
-    }
-
     fn token_byte_len(&mut self, token: u32) -> Result<usize> {
         if let Some(&len) = self.token_len.get(&token) {
             return Ok(len);
@@ -162,11 +156,6 @@ impl ModelDetector {
         Ok((tokens, offsets))
     }
 
-    pub(crate) fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        let results = self.detect_batch(&[text], min_score)?;
-        Ok(results.into_iter().next().unwrap_or_default())
-    }
-
     fn tokenize_all(&mut self, texts: &[&str]) -> Result<Tokenized> {
         let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(texts.len());
         let mut offsets: Vec<Vec<usize>> = Vec::with_capacity(texts.len());
@@ -183,52 +172,59 @@ impl ModelDetector {
         Ok((tokens, offsets))
     }
 
+    /// Run detection over a batch of texts, auto-windowing long inputs and
+    /// length-sorting every window so each `run` pads tightly.
+    ///
+    /// `batch_override` pins the sequences-per-`run`; `None` derives it
+    /// adaptively from sequence length (see [`Self::plan_batch`]). Output is
+    /// independent of window order and batch composition — padding is masked,
+    /// so each row decodes in isolation.
     pub(crate) fn detect_batch(
         &mut self,
         texts: &[&str],
         min_score: f32,
+        batch_override: Option<usize>,
     ) -> Result<Vec<Vec<PiiSpan>>> {
-        let (tokens, offsets) = self.tokenize_all(texts)?;
-        let mut multi_window = vec![false; texts.len()];
-        let windows = build_windows(texts, &tokens, &offsets, &mut multi_window);
-
-        let mut out = vec![Vec::new(); texts.len()];
-        self.run_and_decode_sized(&windows, &mut out, MAX_BATCH)?;
-
-        finalize(&mut out, texts, &multi_window, min_score);
-        Ok(out)
-    }
-
-    pub(crate) fn detect_corpus(
-        &mut self,
-        texts: &[&str],
-        min_score: f32,
-        batch_size: usize,
-    ) -> Result<Vec<Vec<PiiSpan>>> {
-        let batch_size = batch_size.max(1);
         let (tokens, offsets) = self.tokenize_all(texts)?;
         let mut multi_window = vec![false; texts.len()];
         let mut windows = build_windows(texts, &tokens, &offsets, &mut multi_window);
         windows.sort_by_key(|window| std::cmp::Reverse(window.tokens.len()));
 
         let mut out = vec![Vec::new(); texts.len()];
-        self.run_and_decode_sized(&windows, &mut out, batch_size)?;
+        self.run_and_decode(&windows, &mut out, batch_override)?;
 
         finalize(&mut out, texts, &multi_window, min_score);
         Ok(out)
     }
 
-    fn run_and_decode_sized(
+    /// Adaptive batch size for a chunk whose longest (padded) sequence is
+    /// `seq_len`: pack as many rows as fit a fixed token budget, so long
+    /// windows run few-at-a-time (bounding the `heads × seq × seq` attention
+    /// tensor) while short ones pack densely to amortise the fixed per-`run`
+    /// cost. Capped by the provider (GPU bucketing tolerates wider batches).
+    fn plan_batch(&self, seq_len: usize) -> usize {
+        let cap = if self.bucket_shapes {
+            GPU_WINDOW_BATCH
+        } else {
+            CPU_BATCH_CAP
+        };
+        (TOKEN_BUDGET / seq_len.max(1)).clamp(1, cap)
+    }
+
+    fn run_and_decode(
         &mut self,
         windows: &[Window],
         out: &mut [Vec<PiiSpan>],
-        batch_size: usize,
+        batch_override: Option<usize>,
     ) -> Result<()> {
         let label_count = self.labels.len();
-        for chunk in windows.chunks(batch_size) {
-            let batch = chunk.len();
-            let max_len = chunk.iter().map(|w| w.tokens.len()).max().unwrap_or(0);
+        let mut start = 0;
+        while start < windows.len() {
+            // Windows are sorted longest-first, so the head of the remaining
+            // slice is the chunk's max length — pad/bucket the chunk to it.
+            let max_len = windows[start].tokens.len();
             if max_len == 0 {
+                start += 1;
                 continue;
             }
             let padded = if self.bucket_shapes {
@@ -236,6 +232,13 @@ impl ModelDetector {
             } else {
                 max_len
             };
+            let rows = match batch_override {
+                Some(n) => n.max(1),
+                None => self.plan_batch(padded),
+            };
+            let end = (start + rows).min(windows.len());
+            let chunk = &windows[start..end];
+            let batch = chunk.len();
             let mut ids = vec![0i64; batch * padded];
             let mut mask = vec![0i64; batch * padded];
             for (b, window) in chunk.iter().enumerate() {
@@ -271,6 +274,7 @@ impl ModelDetector {
                 let window_logits = &logits[base..base + padded * label_count];
                 decode_window(window_logits, window, label_count, &self.labels, out);
             }
+            start = end;
         }
         Ok(())
     }

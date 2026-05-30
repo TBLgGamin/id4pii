@@ -26,6 +26,7 @@ pub struct Detector {
     model: ModelDetector,
     regex: &'static RegexDetector,
     use_regex: bool,
+    batch_override: Option<usize>,
 }
 
 impl std::fmt::Debug for Detector {
@@ -46,6 +47,7 @@ impl Detector {
             model,
             regex: RegexDetector::global(),
             use_regex,
+            batch_override: None,
         })
     }
 
@@ -58,65 +60,40 @@ impl Detector {
         self.use_regex = enabled;
     }
 
+    /// Pin the inference batch size (sequences per ONNX `run`).
+    ///
+    /// `None` (the default) lets [`Detector::detect_batch`] choose the batch
+    /// size adaptively from the input's sequence lengths — small for long
+    /// windows (to bound the attention tensor), large for short ones (to
+    /// amortise the fixed per-`run` cost). Pass `Some(n)` to force a fixed
+    /// size for throughput tuning.
+    pub fn set_batch_override(&mut self, batch: Option<usize>) {
+        self.batch_override = batch;
+    }
+
+    /// Detect PII in a single text. Convenience wrapper over
+    /// [`Detector::detect_batch`].
     pub fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        if text.is_empty() {
-            return Ok(Vec::new());
-        }
-        if !self.use_regex {
-            return self.model.detect(text, min_score);
-        }
-
-        let regex_spans = self.regex.detect(text);
-        if regex_spans.is_empty() {
-            return self.model.detect(text, min_score);
-        }
-
-        let masked = mask::mask(text, &regex_spans);
-        let model_spans = self.model.detect(&masked.text, min_score)?;
-        Ok(combine(text, regex_spans, &model_spans, &masked))
+        Ok(self
+            .detect_batch(std::slice::from_ref(&text), min_score)?
+            .into_iter()
+            .next()
+            .unwrap_or_default())
     }
 
-    pub fn detect_model_only(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        self.model.detect(text, min_score)
-    }
-
-    #[must_use]
-    pub fn recommended_window_batch(&self) -> usize {
-        self.model.recommended_window_batch()
-    }
-
-    pub fn detect_windowed(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        let batch_size = self.recommended_window_batch();
-        let results = self.detect_corpus(&[text], min_score, batch_size)?;
-        Ok(results.into_iter().next().unwrap_or_default())
-    }
-
+    /// Detect PII across many texts in one smart pass.
+    ///
+    /// This is the single detection entry point. It runs the regex pre-pass,
+    /// masks the structural hits, then feeds the shortened texts to the model,
+    /// which internally windows long inputs, length-sorts the windows, and
+    /// batches them adaptively (GPU-bucketed when a GPU provider is active).
+    /// A lone short text and a multi-GB corpus take the same call — the engine
+    /// picks the strategy. Detection of an empty input is empty.
     pub fn detect_batch(&mut self, texts: &[&str], min_score: f32) -> Result<Vec<Vec<PiiSpan>>> {
-        self.detect_many(texts, min_score, None)
-    }
-
-    pub fn detect_corpus(
-        &mut self,
-        texts: &[&str],
-        min_score: f32,
-        batch_size: usize,
-    ) -> Result<Vec<Vec<PiiSpan>>> {
-        self.detect_many(texts, min_score, Some(batch_size))
-    }
-
-    fn detect_many(
-        &mut self,
-        texts: &[&str],
-        min_score: f32,
-        batch_size: Option<usize>,
-    ) -> Result<Vec<Vec<PiiSpan>>> {
-        let run_model = |model: &mut ModelDetector, inputs: &[&str]| match batch_size {
-            Some(size) => model.detect_corpus(inputs, min_score, size),
-            None => model.detect_batch(inputs, min_score),
-        };
-
         if !self.use_regex {
-            return run_model(&mut self.model, texts);
+            return self
+                .model
+                .detect_batch(texts, min_score, self.batch_override);
         }
         let regex_spans: Vec<Vec<PiiSpan>> = texts.iter().map(|t| self.regex.detect(t)).collect();
         let masked: Vec<mask::Masked> = texts
@@ -125,7 +102,9 @@ impl Detector {
             .map(|(text, spans)| mask::mask(text, spans))
             .collect();
         let masked_refs: Vec<&str> = masked.iter().map(|m| m.text.as_str()).collect();
-        let model_spans = run_model(&mut self.model, &masked_refs)?;
+        let model_spans = self
+            .model
+            .detect_batch(&masked_refs, min_score, self.batch_override)?;
 
         let mut out = Vec::with_capacity(texts.len());
         for (index, regex) in regex_spans.into_iter().enumerate() {

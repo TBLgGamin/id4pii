@@ -209,10 +209,11 @@ fn model_loop(
 ) -> Result<()> {
     let mut detector =
         Detector::load(model, model_file, threads).context("failed to load model")?;
+    detector.set_batch_override(Some(batch_size));
     while let Ok(records) = raw_rx.recv() {
         let texts: Vec<&str> = records.iter().map(|record| record.text.as_str()).collect();
         let spans = detector
-            .detect_corpus(&texts, min_score, batch_size)
+            .detect_batch(&texts, min_score)
             .context("detection failed")?;
         drop(texts);
         if res_tx.send((records, spans)).is_err() {

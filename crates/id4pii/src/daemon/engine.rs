@@ -27,7 +27,7 @@ pub(crate) trait Detect: Send {
 
 impl Detect for Detector {
     fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        Detector::detect_windowed(self, text, min_score).map_err(|e| anyhow!("{e}"))
+        Detector::detect(self, text, min_score).map_err(|e| anyhow!("{e}"))
     }
 }
 
