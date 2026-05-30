@@ -6,6 +6,10 @@ All notable changes to id4pii. The format is loosely based on [Keep a Changelog]
 
 A structural refactor that unifies the codebase behind one engine and one set of names. No change to detection output, the vault format, or the WebSocket/extension protocol.
 
+### Added
+
+- **Document anonymization from the CLI and HTTP API.** `id4pii anonymize --file report.docx -o safe.docx` (and `POST /anonymize-file`, base64 in/out) rewrite a `.docx/.pptx/.xlsx/.pdf` as the same file type with surrogates swapped in — previously this was reachable only through the browser-extension upload path. A shared `document::anonymize_document` orchestrates plan → detect → anonymize → rewrite for all three callers.
+
 ### Changed
 
 - **Single `id4pii` crate.** The `id4pii-core` + `id4pii-app` split is merged into one `crates/id4pii` crate (library + both binaries). External `id4pii_core::` / `id4pii_app::` paths become `id4pii::`; the public API is otherwise unchanged.

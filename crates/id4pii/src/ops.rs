@@ -1,7 +1,7 @@
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
 
@@ -28,6 +28,10 @@ pub(crate) struct AnonymizeArgs {
     text: Option<String>,
     #[arg(short, long)]
     file: Option<PathBuf>,
+    /// Output file. Required when `--file` is a document (.docx/.pptx/.xlsx/.pdf),
+    /// which is rewritten as the same file type; ignored for plain text.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
     #[arg(long)]
     seed: Option<u64>,
     #[arg(long)]
@@ -81,6 +85,12 @@ pub(crate) fn scan(args: &ScanArgs) -> Result<()> {
 }
 
 pub(crate) fn anonymize(args: &AnonymizeArgs) -> Result<()> {
+    if let Some(file) = &args.file
+        && crate::document::is_document(&file.to_string_lossy())
+    {
+        return anonymize_document_file(args, file);
+    }
+
     let text = read_input(args.text.as_ref(), args.file.as_ref())?;
     let mut detector = model_setup::load_detector(
         &args.model.model,
@@ -111,6 +121,54 @@ pub(crate) fn deanonymize(args: &DeanonymizeArgs) -> Result<()> {
         .with_context(|| format!("failed to read {}", args.vault.display()))?;
     let vault: Vault = serde_json::from_str(&vault_text).context("invalid vault file")?;
     println!("{}", crate::deanonymize(&text, &vault));
+    Ok(())
+}
+
+fn anonymize_document_file(args: &AnonymizeArgs, file: &Path) -> Result<()> {
+    let output = args
+        .output
+        .as_ref()
+        .ok_or_else(|| anyhow!("anonymizing a document needs --output <file>"))?;
+    let bytes =
+        std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let mut detector = model_setup::load_detector(
+        &args.model.model,
+        &args.model.model_file,
+        args.model.threads,
+    )?;
+    let min_score = args.model.min_score;
+    let mut rng = args.seed.map_or_else(Rng::from_entropy, Rng::new);
+    let mut vault = Vault::default();
+
+    let (out, count) = crate::document::anonymize_document(
+        &bytes,
+        &name,
+        |text| {
+            detector
+                .detect(text, min_score)
+                .map_err(anyhow::Error::from)
+        },
+        &mut rng,
+        &mut vault,
+    )?;
+
+    std::fs::write(output, &out.data)
+        .with_context(|| format!("failed to write {}", output.display()))?;
+    if let Some(path) = &args.vault_out {
+        std::fs::write(path, serde_json::to_string_pretty(&vault)?)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+    }
+    eprintln!(
+        "id4pii: anonymized {} ({count} replacement{}) -> {}",
+        file.display(),
+        if count == 1 { "" } else { "s" },
+        output.display()
+    );
     Ok(())
 }
 

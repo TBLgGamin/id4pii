@@ -9,6 +9,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+use base64::{Engine as _, prelude::BASE64_STANDARD};
+
 use crate::detector_service::{Coalesce, DetectorService};
 use crate::{PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
 
@@ -49,6 +51,24 @@ struct AnonymizeRequest {
 #[derive(Serialize)]
 struct AnonymizeResponse {
     anonymized: String,
+    vault: Vault,
+}
+
+#[derive(Deserialize)]
+struct AnonymizeFileRequest {
+    filename: String,
+    data: String,
+    #[serde(default)]
+    seed: Option<u64>,
+    #[serde(default)]
+    min_score: Option<f32>,
+}
+
+#[derive(Serialize)]
+struct AnonymizeFileResponse {
+    data: String,
+    mime: &'static str,
+    count: usize,
     vault: Vault,
 }
 
@@ -99,6 +119,7 @@ pub(crate) async fn run(
         .route("/health", get(health))
         .route("/scan", post(scan))
         .route("/anonymize", post(anonymize_route))
+        .route("/anonymize-file", post(anonymize_file_route))
         .route("/deanonymize", post(deanonymize_route))
         .with_state(state);
 
@@ -141,6 +162,51 @@ async fn anonymize_route(
     let mut rng = request.seed.map_or_else(Rng::from_entropy, Rng::new);
     let (anonymized, vault) = anonymize(&request.text, &spans, &mut rng);
     Ok(Json(AnonymizeResponse { anonymized, vault }))
+}
+
+async fn anonymize_file_route(
+    State(state): State<AppState>,
+    Json(request): Json<AnonymizeFileRequest>,
+) -> std::result::Result<Json<AnonymizeFileResponse>, ApiError> {
+    let service = state.service.clone();
+    let threshold = request.min_score.unwrap_or(state.min_score);
+    let response = tokio::task::spawn_blocking(
+        move || -> std::result::Result<AnonymizeFileResponse, String> {
+            let bytes = BASE64_STANDARD
+                .decode(request.data.as_bytes())
+                .map_err(|e| format!("base64 decode failed: {e}"))?;
+            let mut rng = request.seed.map_or_else(Rng::from_entropy, Rng::new);
+            let mut vault = Vault::default();
+            // Detect at 0.0 (shared-batch threshold invariant) and filter here.
+            let (output, count) = crate::document::anonymize_document(
+                &bytes,
+                &request.filename,
+                |text| {
+                    let mut spans = service
+                        .submit(vec![text.to_string()], 0.0)
+                        .map_err(|e| anyhow::anyhow!(e))?
+                        .pop()
+                        .unwrap_or_default();
+                    if threshold > 0.0 {
+                        spans.retain(|span| span.score >= threshold);
+                    }
+                    Ok(spans)
+                },
+                &mut rng,
+                &mut vault,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(AnonymizeFileResponse {
+                data: BASE64_STANDARD.encode(&output.data),
+                mime: output.mime,
+                count,
+                vault,
+            })
+        },
+    )
+    .await
+    .map_err(|_| ApiError("anonymize-file task panicked".to_string()))?;
+    response.map(Json).map_err(ApiError)
 }
 
 async fn deanonymize_route(Json(request): Json<DeanonymizeRequest>) -> Json<DeanonymizeResponse> {

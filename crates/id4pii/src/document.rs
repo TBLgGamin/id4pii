@@ -2,7 +2,7 @@
 
 use std::io::{Cursor, Read, Write};
 
-use crate::{Placement, apply_placements};
+use crate::{PiiSpan, Placement, Rng, SurrogateStore, anonymize_placements, apply_placements};
 use anyhow::{Context, Result, anyhow, bail};
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, BytesText, Event};
@@ -74,6 +74,46 @@ const MIME_DOCX: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const MIME_PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const MIME_XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const MIME_PDF: &str = "application/pdf";
+
+/// True if `filename`'s extension is one this module can anonymize in place
+/// (same file type in, same out). Lets a caller route documents to
+/// [`anonymize_document`] and everything else to the plain text path.
+#[must_use]
+pub fn is_document(filename: &str) -> bool {
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    matches!(ext.as_str(), "docx" | "pptx" | "xlsx" | "pdf")
+}
+
+/// Plan a document, detect PII in its concatenated text via `detect`, anonymize
+/// into `store`, and rewrite it back as the **same file type**. Returns the
+/// rewritten bytes + MIME and the number of spans replaced. The single
+/// orchestration shared by the CLI, the HTTP API, and (in spirit) the daemon
+/// bridge — fail-closed: any plan/rewrite error propagates, no partial output.
+pub fn anonymize_document<S, D>(
+    bytes: &[u8],
+    filename: &str,
+    detect: D,
+    rng: &mut Rng,
+    store: &mut S,
+) -> Result<(RewriteOutput, usize)>
+where
+    S: SurrogateStore,
+    D: FnOnce(&str) -> Result<Vec<PiiSpan>>,
+{
+    let planned = plan(bytes, filename)?;
+    let spans = if planned.text.trim().is_empty() {
+        Vec::new()
+    } else {
+        detect(&planned.text)?
+    };
+    let (placements, _subs) = anonymize_placements(&planned.text, &spans, rng, store);
+    let count = placements.len();
+    Ok((planned.finish(&placements)?, count))
+}
 
 pub fn plan(bytes: &[u8], filename: &str) -> Result<DocPlan> {
     let ext = filename
@@ -718,6 +758,40 @@ mod tests {
         assert!(!after.contains("sarah@skynet.com"), "leaked: {after:?}");
         let raw = entry_of(&out.data, "word/document.xml");
         assert!(!raw.contains("Sarah Connor"), "raw xml leak: {raw:?}");
+    }
+
+    #[test]
+    fn anonymize_document_detects_anonymizes_and_rewrites() {
+        let xml = br#"<?xml version="1.0"?><w:document xmlns:w="x"><w:body>
+            <w:p><w:r><w:t>Hello Sarah Connor</w:t></w:r></w:p>
+            </w:body></w:document>"#;
+        let bytes = zip_with(&[("word/document.xml", xml)]);
+        let mut rng = crate::Rng::new(1);
+        let mut vault = crate::Vault::default();
+
+        let (out, count) = anonymize_document(
+            &bytes,
+            "resume.docx",
+            |text| {
+                let start = text.find("Sarah Connor").expect("name present");
+                Ok(vec![crate::PiiSpan {
+                    category: crate::Category::PrivatePerson,
+                    start,
+                    end: start + "Sarah Connor".len(),
+                    text: "Sarah Connor".to_string(),
+                    score: 1.0,
+                }])
+            },
+            &mut rng,
+            &mut vault,
+        )
+        .unwrap();
+
+        assert_eq!(count, 1);
+        assert_eq!(out.mime, MIME_DOCX);
+        let after = plan(&out.data, "resume.docx").unwrap().text;
+        assert!(!after.contains("Sarah Connor"), "leaked: {after:?}");
+        assert!(vault.entries.iter().any(|e| e.real == "Sarah Connor"));
     }
 
     #[test]

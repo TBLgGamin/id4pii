@@ -148,10 +148,15 @@ All five are thin adapters over the same engine.
 - **CLI** (`cli.rs`): `scan` / `anonymize` / `deanonymize` / `corpus` / `serve` /
   `daemon` / `install` / `uninstall` / `doctor`. Shared `ModelArgs`
   (`--model`/`--model-file`/`--threads`/`--min-score`).
-- **HTTP** (`serve.rs`): `GET /health`, `POST /scan|/anonymize|/deanonymize`.
+- **HTTP** (`serve.rs`): `GET /health`, `POST /scan|/anonymize|/anonymize-file|/deanonymize`.
   Runs the model on the shared `DetectorService` with `Coalesce::UpTo(16)` —
   concurrent requests coalesce into one batched run with no added latency for a
   lone request. Submits at `min_score = 0.0` and filters per request.
+- **Document anonymization** (`document.rs`): `anonymize_document` plans a
+  `.docx/.pptx/.xlsx/.pdf`, detects via an injected closure, and rewrites it as
+  the **same file type**. Reachable from the CLI (`anonymize --file doc.docx -o
+  safe.docx`), the HTTP API (`/anonymize-file`, base64 in/out), and the daemon's
+  extension upload path — one orchestration, three callers.
 - **Corpus** (`corpus.rs`): a streaming reader → `DetectorService` (`Coalesce::Off`)
   → writer pipeline over arbitrarily large inputs (files / jsonl / lines / tsv).
   One shared vault across the run; bounded channels cap memory.
