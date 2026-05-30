@@ -2,6 +2,21 @@
 
 All notable changes to id4pii. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/), and the project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+A structural refactor that unifies the codebase behind one engine and one set of names. No change to detection output, the vault format, or the WebSocket/extension protocol.
+
+### Changed
+
+- **Single `id4pii` crate.** The `id4pii-core` + `id4pii-app` split is merged into one `crates/id4pii` crate (library + both binaries). External `id4pii_core::` / `id4pii_app::` paths become `id4pii::`; the public API is otherwise unchanged.
+- **One smart detection entry point.** `detect`, `detect_model_only`, `detect_windowed`, `detect_batch`, `detect_corpus`, and `recommended_window_batch` collapse into `Detector::detect` (single) and `Detector::detect_batch` (many). `detect_batch` always windows long inputs, length-sorts the windows, and **picks the inference batch size adaptively** from sequence length (small for long windows to bound the attention tensor, large for short ones to amortise the fixed per-`run` cost) — `scan`, `serve`, `batch`, and the daemon all share it. Model-only detection is `set_regex_enabled(false)`; `set_batch_override(Some(n))` (the `batch --batch` flag, now optional/auto by default) pins the size for throughput.
+- **One inference scheduler.** The HTTP server's batcher and the corpus pipeline's model loop are folded into a shared `DetectorService` — one Detector on one dedicated thread (the single place the ORT single-inference-thread rule lives). Coalescing is a policy: `serve` pools concurrent requests; `batch` streams shard-at-a-time, preserving its memory bound and record-order surrogate minting.
+- **`load_detector` helper** replaces the duplicated `ensure_model` + `Detector::load` across `scan`, `anonymize`, `serve`, and `batch`.
+
+### Renamed (migration)
+
+- **`guard` → `daemon` everywhere.** The shipped binary **`id4pii-guard.exe` is now `id4pii-daemon.exe`**, the subcommand `id4pii guard` is now `id4pii daemon`, the rolling log `guard.log` is now `daemon.log`, and the tray/Start-Menu text follows. The autostart registry **value** name stays `id4pii` (only the exe path it points at changes), so a reinstall re-points autostart cleanly; the old `guard.log` is left orphaned. The Chrome extension display name is now just **id4pii**.
+
 ## [0.2.0] — 2026-05-27
 
 ### Added

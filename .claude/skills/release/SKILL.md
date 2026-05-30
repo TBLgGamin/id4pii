@@ -31,8 +31,7 @@ These four MUST match. Missing one ships an inconsistent artifact.
 | File | Field |
 |---|---|
 | `.env.example` | `ID4PII_APP_VERSION=<version>` |
-| `crates/app/Cargo.toml` | `version = "<version>"` (under `[package]`) |
-| `crates/core/Cargo.toml` | `version = "<version>"` (under `[package]`) |
+| `crates/id4pii/Cargo.toml` | `version = "<version>"` (under `[package]`) |
 | `extension/manifest.json` | `"version": "<version>"` |
 
 The installer build script reads `.env`'s `ID4PII_APP_VERSION`; the extension packager stamps `manifest.json` from `.env` too — but the source-tree manifest version should still match for any unpacked dev loads and review.

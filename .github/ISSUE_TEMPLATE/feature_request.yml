@@ -32,7 +32,7 @@ body:
       multiple: true
       options:
         - Chrome extension
-        - id4pii-guard tray app
+        - id4pii-daemon tray app
         - id4pii CLI / HTTP server
         - Installer / packaging
         - Documentation

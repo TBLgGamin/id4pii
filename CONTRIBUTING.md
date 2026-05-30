@@ -16,7 +16,7 @@ cargo test --workspace
 That's it for the test suite. To build and run the app crate, you also need:
 
 ```sh
-cargo build --release -p id4pii-app
+cargo build --release -p id4pii
 ./target/release/id4pii scan "Hi, I'm Alice <alice@example.com>"
 ```
 
@@ -28,7 +28,7 @@ The app crate refuses to build without a `.env` file at the repo root. **End use
 cp .env.example .env
 ```
 
-Then edit `.env`. The default values in `.env.example` are fine for local dev. The only key you might want to override is `ID4PII_PUBLISHED_EXTENSION_ID` — leave it blank unless you've published your own fork to the Chrome Web Store and want guard to pin that ID.
+Then edit `.env`. The default values in `.env.example` are fine for local dev. The only key you might want to override is `ID4PII_PUBLISHED_EXTENSION_ID` — leave it blank unless you've published your own fork to the Chrome Web Store and want the daemon to pin that ID.
 
 The build fails with a clear error if `.env` is missing or a required key is absent. Don't add fallbacks.
 
@@ -49,34 +49,33 @@ For CI, the same keys come from repository secrets — see `.github/workflows/re
 
 - Rust **1.95.0** (pinned in `rust-toolchain.toml`).
 - For the installer: Inno Setup 6 on PATH (`iscc.exe`) or installed in the default location.
-- For Windows-side development you need a Windows machine — the `guard` subcommand and the installer are `cfg(windows)`-gated.
+- For Windows-side development you need a Windows machine — the `daemon` subcommand and the installer are `cfg(windows)`-gated.
 
 ## Development loop
 
 ```sh
-cargo test --workspace              # all tests
-cargo test -p id4pii-core           # core only, no .env needed
+cargo test --workspace              # all tests (needs .env; one id4pii crate now)
 cargo fmt --all                     # format
 cargo clippy --all-targets          # lints (workspace is configured strict)
-cargo bench -p id4pii-core          # hot-path benches (deanonymize, anonymize_with_subs)
+cargo bench -p id4pii               # hot-path benches (deanonymize, anonymize_with_subs)
 ```
 
-CI runs fmt + clippy + check + test on both `ubuntu-latest` and `windows-latest` (with `RUSTFLAGS=-D warnings`, so any clippy `pedantic`/`unwrap`/`expect` warning fails the build). The Windows job is the one that compiles the `cfg(windows)` guard and runs its engine integration tests, so test guard changes on Windows before pushing. CI provisions its own `.env` with `cp .env.example .env`.
+CI runs fmt + clippy + check + test on both `ubuntu-latest` and `windows-latest` (with `RUSTFLAGS=-D warnings`, so any clippy `pedantic`/`unwrap`/`expect` warning fails the build). The Windows job is the one that compiles the `cfg(windows)` daemon and runs its engine integration tests, so test daemon changes on Windows before pushing. CI provisions its own `.env` with `cp .env.example .env`.
 
-## Running guard locally
+## Running the daemon locally
 
-The shipped product is `id4pii-guard.exe` — a Windows-subsystem binary with no console. For development you usually want the console-attached version so you can watch logs in stderr:
+The shipped product is `id4pii-daemon.exe` — a Windows-subsystem binary with no console. For development you usually want the console-attached version so you can watch logs in stderr:
 
 ```sh
-cargo run --release -p id4pii-app -- guard --dev-extensions
+cargo run --release -p id4pii -- daemon --dev-extensions
 ```
 
-Same code, console output. Logs also land in `%LOCALAPPDATA%\id4pii\logs\guard.log` either way.
+Same code, console output. Logs also land in `%LOCALAPPDATA%\id4pii\logs\daemon.log` either way.
 
 To exercise the no-console binary that end users actually run:
 
 ```sh
-cargo run --release --bin id4pii-guard -- --dev-extensions
+cargo run --release --bin id4pii-daemon -- --dev-extensions
 ```
 
 The `--dev-extensions` flag relaxes the bridge's origin check so any `chrome-extension://` ID can connect. Production builds pin the single Web Store ID from `.env`.
@@ -87,7 +86,7 @@ The `--dev-extensions` flag relaxes the bridge's origin check so any `chrome-ext
 .\scripts\sync-extension-assets.ps1
 ```
 
-Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `extension/` directory. Guard must be running with `--dev-extensions` for the bridge to accept the connection (the production allowlist pins the single Web Store ID).
+Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `extension/` directory. The daemon must be running with `--dev-extensions` for the bridge to accept the connection (the production allowlist pins the single Web Store ID).
 
 ## Building the installer locally
 

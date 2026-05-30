@@ -54,7 +54,7 @@ body:
       multiple: true
       options:
         - Chrome extension (toolbar, onboarding, content-script behavior)
-        - id4pii-guard tray app (hotkeys, log, tray menu)
+        - id4pii-daemon tray app (hotkeys, log, tray menu)
         - id4pii CLI (scan / anonymize / install / doctor)
         - Installer / uninstaller
     validations:

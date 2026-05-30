@@ -15,11 +15,11 @@ notepad .env
 Output: `installer\dist\id4pii-setup.exe`.
 
 `build-installer.ps1` does three things, in order:
-1. `cargo build --release -p id4pii-app` — produces both `id4pii.exe` (CLI) and `id4pii-guard.exe` (GUI). Skip with `-SkipCargo` if you already have a fresh release build.
+1. `cargo build --release -p id4pii` — produces both `id4pii.exe` (CLI) and `id4pii-daemon.exe` (GUI). Skip with `-SkipCargo` if you already have a fresh release build.
 2. Syncs extension assets via `sync-extension-assets.ps1`.
 3. Invokes `iscc` with `/D` defines populated from `.env` (parsed by the shared `scripts/lib/env.ps1`).
 
-`build.rs` in `crates/app` also reads `.env` so the Rust binary picks up the same extension ID and other values at compile time — no runtime `.env` lookup, the values are baked into the exe.
+`build.rs` in `crates/id4pii` also reads `.env` so the Rust binary picks up the same extension ID and other values at compile time — no runtime `.env` lookup, the values are baked into the exe.
 
 ## Wizard images
 
@@ -33,10 +33,10 @@ The result is the closest approximation of shadcn dark-mode look the Inno instal
 
 ## What the installer wires up
 
-- `id4pii.exe` and `id4pii-guard.exe` into `Program Files\id4pii\`.
-- Start Menu group **id4pii** with: shortcut to `id4pii-guard.exe`, **Open id4pii log folder**, **Uninstall id4pii**.
+- `id4pii.exe` and `id4pii-daemon.exe` into `Program Files\id4pii\`.
+- Start Menu group **id4pii** with: shortcut to `id4pii-daemon.exe`, **Open id4pii log folder**, **Uninstall id4pii**.
 - Optional Desktop shortcut (off by default, presented as a Task).
-- `HKCU\…\Run\id4pii` pointing at `id4pii-guard.exe` for login auto-start.
+- `HKCU\…\Run\id4pii` pointing at `id4pii-daemon.exe` for login auto-start.
 - Pre-registered Chrome extension via `HKLM\…\Chrome\Extensions\<id>` (only when `ID4PII_PUBLISHED_EXTENSION_ID` is non-empty).
 - Post-install run of `id4pii.exe install --with-model` to fetch the model.
 

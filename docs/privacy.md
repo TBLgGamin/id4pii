@@ -11,7 +11,7 @@ id4pii is a local privacy tool. Its entire reason to exist is to keep your text 
 ## Short version
 
 - We collect nothing. No telemetry, no analytics, no usage pings, no account creation, no remote backend.
-- All text you anonymize stays on your own computer. The Chrome extension talks to a local companion application (id4pii guard) over a loopback WebSocket (`ws://127.0.0.1:7878`) — a connection to your own machine that cannot leave it.
+- All text you anonymize stays on your own computer. The Chrome extension talks to a local companion application (id4pii daemon) over a loopback WebSocket (`ws://127.0.0.1:7878`) — a connection to your own machine that cannot leave it.
 - We do not transmit, log, or store the contents of your messages, the assistant's replies, your real names, your emails, or any vault mapping anywhere outside your computer.
 
 If that's all you wanted to know, you can stop reading.
@@ -23,13 +23,13 @@ To do its job, the Chrome extension reads:
 - The text you type into the input field on the supported sites (ChatGPT, Claude, Gemini) at the moment you submit it.
 - The text of the assistant's reply as it streams into the page, so it can restore your real values in place of the stand-ins.
 
-It then forwards that text to the local id4pii guard application running on your own machine, gets back a redacted version, and lets the browser submit that redacted version instead of the original.
+It then forwards that text to the local id4pii daemon application running on your own machine, gets back a redacted version, and lets the browser submit that redacted version instead of the original.
 
 The extension does not access cookies, browsing history, other tabs' contents, downloads, the file system, the clipboard, or anything else.
 
 ## Where data is processed
 
-All detection and substitution happens on your computer in the id4pii guard process:
+All detection and substitution happens on your computer in the id4pii daemon process:
 
 - The PII detection model ([openai/privacy-filter](https://huggingface.co/openai/privacy-filter)) is downloaded once at install time and runs offline through ONNX Runtime. The model never talks to a server while it's running — it only loads weights from disk and produces token-level predictions in-process.
 - The mapping of "real value ↔ fictional surrogate" is held in memory and persisted between sessions in `%LOCALAPPDATA%\id4pii\vault.bin`, encrypted via the Windows Data Protection API (DPAPI) so that only the same Windows user on the same machine can read it back.
@@ -38,7 +38,7 @@ The extension and the local application communicate exclusively over the loopbac
 
 ## What is logged
 
-The id4pii guard application writes a rolling log file to `%LOCALAPPDATA%\id4pii\logs\guard.log` (7 days retained). The log is **structured** and deliberately omits everything sensitive:
+The id4pii daemon application writes a rolling log file to `%LOCALAPPDATA%\id4pii\logs\daemon.log` (7 days retained). The log is **structured** and deliberately omits everything sensitive:
 
 - Logged: request IDs, operation kinds (anonymize / restore / undo), counts (e.g. "5 spans detected"), durations, error messages, the source of the request (hotkey vs. browser tab).
 - **Not logged, anywhere, at any verbosity level:** the original text, the anonymized text, surrogate values, vault entries, the contents of any input field, the contents of any LLM reply.

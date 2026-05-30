@@ -59,7 +59,7 @@ You only need **one of these two**. Whichever you pick, it'll walk you through h
 
 ### Chrome extension
 
-1. [**Add id4pii guard from the Chrome Web Store**](https://chromewebstore.google.com/) _(link goes live with the first public release)_
+1. [**Add id4pii from the Chrome Web Store**](https://chromewebstore.google.com/) _(link goes live with the first public release)_
 2. A welcome tab opens. If the local app isn't installed yet, it gives you a one-click download link.
 3. ~2 minutes of model download, and you're set. The badge turns green.
 
@@ -80,7 +80,7 @@ You only need **one of these two**. Whichever you pick, it'll walk you through h
 
 ```
 ┌────────────┐         ┌────────────────┐         ┌────────────┐
-│  ChatGPT   │  send   │  id4pii guard  │  local  │ AI privacy │
+│  ChatGPT   │  send   │  id4pii  │  local  │ AI privacy │
 │   in your  │ ──────► │ (in your tray) │ ──────► │   model    │
 │   browser  │ ◄────── │                │ ◄────── │            │
 └────────────┘  reply  └────────────────┘         └────────────┘

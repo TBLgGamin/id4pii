@@ -24,8 +24,8 @@ $sign    = Get-EnvKey     -Values $env_values -Key 'ID4PII_INSTALLER_SIGNTOOL'
 $signUn  = Get-EnvKey     -Values $env_values -Key 'ID4PII_INSTALLER_SIGN_UNINSTALLER' -Default 'no'
 
 if (-not $SkipCargo) {
-  Write-Host "==> cargo build --release -p id4pii-app"
-  cargo build --release -p id4pii-app
+  Write-Host "==> cargo build --release -p id4pii"
+  cargo build --release -p id4pii
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 
