@@ -295,8 +295,8 @@ impl Engine {
         );
         let count = spans.len();
 
-        let vault_size_before = vault_lock(&self.vault, |v| v.entries.len());
-        let mut candidate = vault_lock(&self.vault, |v| v.clone());
+        let (vault_size_before, mut candidate) =
+            vault_lock(&self.vault, |v| (v.entries.len(), v.clone()));
         let (output, subs) = anonymize_with_subs(&text, &spans, &mut self.rng, &mut candidate);
         if output == text {
             info!("no PII detected in the focused field");
@@ -606,8 +606,8 @@ impl Engine {
         );
         let count = spans.len();
 
-        let vault_size_before = vault_lock(&self.vault, |v| v.entries.len());
-        let mut candidate = vault_lock(&self.vault, |v| v.clone());
+        let (vault_size_before, mut candidate) =
+            vault_lock(&self.vault, |v| (v.entries.len(), v.clone()));
         let (placements, subs) = anonymize_placements(text, &spans, &mut self.rng, &mut candidate);
         if placements.is_empty() {
             self.bus.publish(&Event::OperationNoChange {

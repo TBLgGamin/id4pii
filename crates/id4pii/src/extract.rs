@@ -362,8 +362,12 @@ fn handle_alt_text_attrs(
     cur: &mut usize,
     pass: &mut PartPass<'_>,
 ) -> Result<()> {
-    let name = std::str::from_utf8(element.name().as_ref())?.to_owned();
-    let mut rebuilt = matches!(pass, PartPass::Rewrite { .. }).then(|| BytesStart::new(name));
+    let mut rebuilt = if matches!(pass, PartPass::Rewrite { .. }) {
+        let name = std::str::from_utf8(element.name().as_ref())?.to_owned();
+        Some(BytesStart::new(name))
+    } else {
+        None
+    };
     for attr in element.attributes() {
         let attr = attr.map_err(|e| anyhow!("attribute parse: {e}"))?;
         if ALT_TEXT_ATTRS.contains(&attr.key.as_ref()) {

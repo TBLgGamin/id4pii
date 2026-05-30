@@ -95,6 +95,9 @@ pub(crate) enum BridgeReply {
     },
 }
 
+// Several variants are published for observability (vault load/save, hotkey
+// registration) but have no payload-reading subscriber yet; the data is kept
+// for future consumers and `{:?}` diagnostics rather than dropped.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub(crate) enum Event {
