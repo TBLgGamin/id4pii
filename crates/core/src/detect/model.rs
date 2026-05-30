@@ -25,6 +25,8 @@ const SEQ_BUCKETS: [usize; 5] = [64, 128, 256, 512, DETECT_WINDOW];
 
 const DEFAULT_INTRA_THREADS: usize = 2;
 
+type Tokenized = (Vec<Vec<u32>>, Vec<Vec<usize>>);
+
 #[cfg(any(feature = "directml", feature = "cuda"))]
 const FORCE_CPU_ENV: &str = "ID4PII_CPU";
 
@@ -155,11 +157,7 @@ impl ModelDetector {
         Ok(results.into_iter().next().unwrap_or_default())
     }
 
-    pub(crate) fn detect_batch(
-        &mut self,
-        texts: &[&str],
-        min_score: f32,
-    ) -> Result<Vec<Vec<PiiSpan>>> {
+    fn tokenize_all(&mut self, texts: &[&str]) -> Result<Tokenized> {
         let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(texts.len());
         let mut offsets: Vec<Vec<usize>> = Vec::with_capacity(texts.len());
         for text in texts {
@@ -172,61 +170,52 @@ impl ModelDetector {
             tokens.push(tok);
             offsets.push(off);
         }
+        Ok((tokens, offsets))
+    }
 
-        let mut windows: Vec<Window> = Vec::new();
+    pub(crate) fn detect_batch(
+        &mut self,
+        texts: &[&str],
+        min_score: f32,
+    ) -> Result<Vec<Vec<PiiSpan>>> {
+        let (tokens, offsets) = self.tokenize_all(texts)?;
         let mut multi_window = vec![false; texts.len()];
-        for (index, text) in texts.iter().enumerate() {
-            let tok = &tokens[index];
-            let off = &offsets[index];
-            if tok.is_empty() {
-                continue;
-            }
-            if tok.len() <= DETECT_WINDOW {
-                windows.push(Window {
-                    tokens: tok,
-                    offsets: off,
-                    token_start: 0,
-                    text,
-                    out_index: index,
-                });
-            } else {
-                multi_window[index] = true;
-                let step = DETECT_WINDOW - DETECT_OVERLAP;
-                let mut start = 0;
-                loop {
-                    let end = (start + DETECT_WINDOW).min(tok.len());
-                    windows.push(Window {
-                        tokens: &tok[start..end],
-                        offsets: off,
-                        token_start: start,
-                        text,
-                        out_index: index,
-                    });
-                    if end == tok.len() {
-                        break;
-                    }
-                    start += step;
-                }
-            }
-        }
+        let windows = build_windows(texts, &tokens, &offsets, &mut multi_window);
 
         let mut out = vec![Vec::new(); texts.len()];
-        self.run_and_decode(&windows, &mut out)?;
+        self.run_and_decode_sized(&windows, &mut out, MAX_BATCH)?;
 
-        for (index, spans) in out.iter_mut().enumerate() {
-            if multi_window[index] {
-                super::merge_overlapping(spans, texts[index]);
-            }
-            if min_score > 0.0 {
-                spans.retain(|span| span.score >= min_score);
-            }
-        }
+        finalize(&mut out, texts, &multi_window, min_score);
         Ok(out)
     }
 
-    fn run_and_decode(&mut self, windows: &[Window], out: &mut [Vec<PiiSpan>]) -> Result<()> {
+    pub(crate) fn detect_corpus(
+        &mut self,
+        texts: &[&str],
+        min_score: f32,
+        batch_size: usize,
+    ) -> Result<Vec<Vec<PiiSpan>>> {
+        let batch_size = batch_size.max(1);
+        let (tokens, offsets) = self.tokenize_all(texts)?;
+        let mut multi_window = vec![false; texts.len()];
+        let mut windows = build_windows(texts, &tokens, &offsets, &mut multi_window);
+        windows.sort_by_key(|window| std::cmp::Reverse(window.tokens.len()));
+
+        let mut out = vec![Vec::new(); texts.len()];
+        self.run_and_decode_sized(&windows, &mut out, batch_size)?;
+
+        finalize(&mut out, texts, &multi_window, min_score);
+        Ok(out)
+    }
+
+    fn run_and_decode_sized(
+        &mut self,
+        windows: &[Window],
+        out: &mut [Vec<PiiSpan>],
+        batch_size: usize,
+    ) -> Result<()> {
         let label_count = self.labels.len();
-        for chunk in windows.chunks(MAX_BATCH) {
+        for chunk in windows.chunks(batch_size) {
             let batch = chunk.len();
             let max_len = chunk.iter().map(|w| w.tokens.len()).max().unwrap_or(0);
             if max_len == 0 {
@@ -283,6 +272,61 @@ struct Window<'a> {
     token_start: usize,
     text: &'a str,
     out_index: usize,
+}
+
+fn build_windows<'a>(
+    texts: &[&'a str],
+    tokens: &'a [Vec<u32>],
+    offsets: &'a [Vec<usize>],
+    multi_window: &mut [bool],
+) -> Vec<Window<'a>> {
+    let mut windows: Vec<Window> = Vec::with_capacity(texts.len());
+    for (index, text) in texts.iter().enumerate() {
+        let tok = &tokens[index];
+        let off = &offsets[index];
+        if tok.is_empty() {
+            continue;
+        }
+        if tok.len() <= DETECT_WINDOW {
+            windows.push(Window {
+                tokens: tok,
+                offsets: off,
+                token_start: 0,
+                text,
+                out_index: index,
+            });
+        } else {
+            multi_window[index] = true;
+            let step = DETECT_WINDOW - DETECT_OVERLAP;
+            let mut start = 0;
+            loop {
+                let end = (start + DETECT_WINDOW).min(tok.len());
+                windows.push(Window {
+                    tokens: &tok[start..end],
+                    offsets: off,
+                    token_start: start,
+                    text,
+                    out_index: index,
+                });
+                if end == tok.len() {
+                    break;
+                }
+                start += step;
+            }
+        }
+    }
+    windows
+}
+
+fn finalize(out: &mut [Vec<PiiSpan>], texts: &[&str], multi_window: &[bool], min_score: f32) {
+    for (index, spans) in out.iter_mut().enumerate() {
+        if multi_window[index] {
+            super::merge_overlapping(spans, texts[index]);
+        }
+        if min_score > 0.0 {
+            spans.retain(|span| span.score >= min_score);
+        }
+    }
 }
 
 fn decode_window(
@@ -385,6 +429,52 @@ fn argmax_softmax(row: &[f32]) -> (usize, f32) {
 #[cfg(test)]
 #[allow(clippy::unreadable_literal)]
 mod tests {
+    use super::{DETECT_WINDOW, build_windows};
+
+    #[test]
+    fn build_windows_assigns_indices_and_sort_is_pure_reorder() {
+        let texts = ["short", "long", "empty"];
+        let offsets = vec![
+            (0..=10).collect::<Vec<usize>>(),
+            (0..=(2 * DETECT_WINDOW + 200)).collect::<Vec<usize>>(),
+            vec![0],
+        ];
+        let tokens = vec![
+            vec![1u32; 10],
+            vec![2u32; 2 * DETECT_WINDOW + 200],
+            Vec::new(),
+        ];
+        let mut multi_window = vec![false; 3];
+        let mut windows = build_windows(&texts, &tokens, &offsets, &mut multi_window);
+
+        assert!(!multi_window[0], "short input is single-window");
+        assert!(multi_window[1], "long input is windowed");
+        assert!(!multi_window[2], "empty input produces no window");
+        assert_eq!(
+            windows.iter().filter(|w| w.out_index == 0).count(),
+            1,
+            "short input yields exactly one window"
+        );
+        assert_eq!(
+            windows.iter().filter(|w| w.out_index == 2).count(),
+            0,
+            "empty input yields no windows"
+        );
+
+        let mut before: Vec<(usize, usize)> = windows
+            .iter()
+            .map(|w| (w.out_index, w.token_start))
+            .collect();
+        windows.sort_by_key(|w| std::cmp::Reverse(w.tokens.len()));
+        let mut after: Vec<(usize, usize)> = windows
+            .iter()
+            .map(|w| (w.out_index, w.token_start))
+            .collect();
+        before.sort_unstable();
+        after.sort_unstable();
+        assert_eq!(before, after, "sorting windows is a pure reordering");
+    }
+
     #[test]
     fn tokenizer_matches_privacy_filter_reference() {
         let bpe = tiktoken_rs::o200k_base().unwrap();

@@ -10,7 +10,7 @@ use serde::Serialize;
 
 #[cfg(windows)]
 use crate::{guard, install};
-use crate::{logging, model_setup, serve};
+use crate::{batch, logging, model_setup, serve};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -28,6 +28,7 @@ enum Command {
     Scan(ScanArgs),
     Anonymize(AnonymizeArgs),
     Deanonymize(DeanonymizeArgs),
+    Batch(batch::BatchArgs),
     Serve(ServeArgs),
     #[cfg(windows)]
     Guard(guard::GuardArgs),
@@ -40,15 +41,15 @@ enum Command {
 }
 
 #[derive(Args, Debug)]
-struct ModelArgs {
+pub(crate) struct ModelArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value_os_t = model_dir::default_dir())]
-    model: PathBuf,
+    pub(crate) model: PathBuf,
     #[arg(long, default_value = model_dir::DEFAULT_MODEL_FILE)]
-    model_file: String,
+    pub(crate) model_file: String,
     #[arg(long, default_value_t = 0)]
-    threads: usize,
+    pub(crate) threads: usize,
     #[arg(long, default_value_t = 0.0)]
-    min_score: f32,
+    pub(crate) min_score: f32,
 }
 
 #[derive(Args, Debug)]
@@ -97,7 +98,7 @@ struct ServeArgs {
 }
 
 #[derive(Clone, Copy, ValueEnum, Debug)]
-enum Style {
+pub(crate) enum Style {
     Label,
     Block,
     Char,
@@ -133,6 +134,7 @@ pub async fn run() -> Result<()> {
         Command::Scan(args) => run_scan(&args),
         Command::Anonymize(args) => run_anonymize(&args),
         Command::Deanonymize(args) => run_deanonymize(&args),
+        Command::Batch(args) => batch::run(&args),
         Command::Serve(args) => {
             serve::run(
                 args.addr,

@@ -17,8 +17,8 @@ pub mod paths;
 mod redact;
 
 pub use anonymize::{
-    Rng, Vault, VaultEntry, anonymize, anonymize_into, anonymize_with_subs, deanonymize,
-    warm_up_pools,
+    IndexedVault, Rng, SurrogateStore, Vault, VaultEntry, anonymize, anonymize_into,
+    anonymize_with_subs, deanonymize, warm_up_pools,
 };
 pub use detect::{Detector, PiiSpan, regex_scan};
 pub use error::{Error, Result};

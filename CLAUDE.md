@@ -20,9 +20,9 @@ crates/
                              merge), span decoding, redaction, anonymization, shared paths
                              (data_root, model_dir, log_dir, vault_file)
   app/    id4pii-app       — lib + two binaries:
-                               id4pii         (CLI; scan / anonymize / deanonymize / serve /
-                                              guard / install / uninstall / doctor; console
-                                              subsystem)
+                               id4pii         (CLI; scan / anonymize / deanonymize / batch /
+                                              serve / guard / install / uninstall / doctor;
+                                              console subsystem)
                                id4pii-guard   (GUI subsystem, no console; reads the same
                                               GuardArgs as `id4pii guard` but is the binary
                                               shipped to end users for auto-start and
@@ -113,6 +113,22 @@ id4pii serve --addr 127.0.0.1:8080
 `min_score` is optional per request; when omitted it falls back to the server default set with `serve --min-score`.
 
 The model runs on a single dedicated thread fed by a queue: each handler submits its text and awaits a one-shot reply, and the thread drains all requests currently queued (up to `MAX_REQUEST_BATCH` = 16) into one batched inference (`Detector::detect_batch`). Requests that arrive while an inference is in flight naturally form the next batch, so concurrent load is coalesced with no added latency for a lone request. `min_score` is applied per request after detection, so requests with different thresholds still share a batch.
+
+## Bulk / corpus ingestion
+
+`id4pii batch` is the **throughput side-path** for ingesting and anonymizing arbitrarily large corpuses. It is *additive*: the small-text/latency path (`scan`, `anonymize`, `serve`) is byte-for-byte and timing unchanged — `batch` is a separate gear, not a rewrite.
+
+```sh
+id4pii batch --input corpus.jsonl --output safe.jsonl --vault-out vault.json   # anonymize, shared vault
+id4pii batch --input docs/ --output safe/ --format files                        # mirror a directory tree
+cat big.txt | id4pii batch --op scan > spans.jsonl                              # stream stdin → JSONL spans
+```
+
+- **Generic record stream.** Input is a stream of `(id, text)` records behind thin format adapters: `files` (recursive directory, one document per file, output mirrors the tree), `jsonl`/`ndjson` (one object per line, `--jsonl-field` selects the text field — default `text` — and the rest of the object is preserved on output), `lines` (one document per line, or `--delimiter` to split a single file on a custom separator), and `tsv` (`--tsv-column`). `--format auto` (default) picks by directory/extension; stdin defaults to `lines`. A leading UTF-8 BOM is stripped. Per-record read/parse errors are logged and skipped; the run continues.
+- **`--op`** is `anonymize` (default), `scan` (emits `{"id", "spans"}` JSONL), or `redact` (`--style`). Only `anonymize` writes `--vault-out`.
+- **One shared vault** for the whole run — the same real value maps to the same surrogate across every document, so `deanonymize` against the single `--vault-out` works corpus-wide. Surrogate lookup is kept O(1) by `IndexedVault` (a transient in-memory `HashMap`/`HashSet` over the `Vec`, **never serialized** — the on-disk vault format is unchanged); without it, `Vault::surrogate_for`'s linear scan makes a large run quadratic (measured ≈10× at 4 000 unique values, widening with size).
+- **Three-stage pipeline, exactly one model thread.** A reader thread streams shards (bounded by `--shard-records`, default 256) → a single model thread runs `Detector::detect_corpus` → the main thread anonymizes into the shared vault and streams output as documents complete (skip-on-error keeps finished work on a crash). Bounded channels (`CHANNEL_DEPTH`) cap memory so a multi-GB corpus never loads whole. **Never** add concurrent inference threads or raise `--threads` to the core count — that reintroduces the ORT intra-op deadlock (see Model).
+- **`detect_corpus` vs `detect_batch`.** Both share `build_windows` + `run_and_decode_sized` and produce *identical* spans (verified end-to-end: `batch --op scan` == per-text `scan`). The throughput path differs only in (1) a configurable `--batch` (sequences per `run`; default 8 on CPU, 32 in a GPU build) and (2) **length-sorting the windows** so each bucket pads tightly — which is what finally makes GPU sequence bucketing (see Model) pay off on large batches. Length-sorting makes seeded surrogate assignment processing-order-dependent (surrogates stay valid and consistent, just not identical to unsorted order for a given `--seed`).
 
 ## Guard — system-wide hotkey (Windows)
 
@@ -259,6 +275,7 @@ cargo bench -p id4pii-core        # benches/engine.rs
 #   anonymize/…_corpus        — anonymize_with_subs over gold spans
 #   deanonymize/…_corpus      — restore the whole corpus against one shared vault
 #   scaling/…                 — fixed-size synthetic regression guards
+#   vault_scaling/…           — indexed vs plain vault on 4000 unique inserts (anonymize-at-scale)
 ```
 
 **Correctness + model A/B** — an example that prints per-category P/R/F1 and, when the model is present, compares model-only vs hybrid on accuracy and wall-clock:

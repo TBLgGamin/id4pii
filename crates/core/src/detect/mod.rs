@@ -81,8 +81,31 @@ impl Detector {
     }
 
     pub fn detect_batch(&mut self, texts: &[&str], min_score: f32) -> Result<Vec<Vec<PiiSpan>>> {
+        self.detect_many(texts, min_score, None)
+    }
+
+    pub fn detect_corpus(
+        &mut self,
+        texts: &[&str],
+        min_score: f32,
+        batch_size: usize,
+    ) -> Result<Vec<Vec<PiiSpan>>> {
+        self.detect_many(texts, min_score, Some(batch_size))
+    }
+
+    fn detect_many(
+        &mut self,
+        texts: &[&str],
+        min_score: f32,
+        batch_size: Option<usize>,
+    ) -> Result<Vec<Vec<PiiSpan>>> {
+        let run_model = |model: &mut ModelDetector, inputs: &[&str]| match batch_size {
+            Some(size) => model.detect_corpus(inputs, min_score, size),
+            None => model.detect_batch(inputs, min_score),
+        };
+
         if !self.use_regex {
-            return self.model.detect_batch(texts, min_score);
+            return run_model(&mut self.model, texts);
         }
         let regex_spans: Vec<Vec<PiiSpan>> = texts.iter().map(|t| self.regex.detect(t)).collect();
         let masked: Vec<mask::Masked> = texts
@@ -91,7 +114,7 @@ impl Detector {
             .map(|(text, spans)| mask::mask(text, spans))
             .collect();
         let masked_refs: Vec<&str> = masked.iter().map(|m| m.text.as_str()).collect();
-        let model_spans = self.model.detect_batch(&masked_refs, min_score)?;
+        let model_spans = run_model(&mut self.model, &masked_refs)?;
 
         let mut out = Vec::with_capacity(texts.len());
         for (index, regex) in regex_spans.into_iter().enumerate() {

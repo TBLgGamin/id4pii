@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,10 @@ pub fn warm_up_pools() {
     let _ = surnames();
 }
 
+pub trait SurrogateStore {
+    fn surrogate_for(&mut self, category: Category, real: &str, rng: &mut Rng) -> String;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultEntry {
     pub category: Category,
@@ -64,7 +69,9 @@ impl Vault {
         {
             return entry.fake.clone();
         }
-        let fake = unique_fake(category, rng, self);
+        let fake = unique_fake_checked(category, rng, |candidate| {
+            self.entries.iter().any(|entry| entry.fake == candidate)
+        });
         self.entries.push(VaultEntry {
             category,
             real: real.to_string(),
@@ -80,6 +87,85 @@ impl Vault {
         let evicted = self.entries.len() - max_entries;
         self.entries.drain(0..evicted);
         evicted
+    }
+}
+
+impl SurrogateStore for Vault {
+    fn surrogate_for(&mut self, category: Category, real: &str, rng: &mut Rng) -> String {
+        Vault::surrogate_for(self, category, real, rng)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IndexedVault {
+    vault: Vault,
+    by_real: HashMap<Category, HashMap<String, usize>>,
+    fakes: HashSet<String>,
+}
+
+impl IndexedVault {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn from_vault(vault: Vault) -> Self {
+        let mut by_real: HashMap<Category, HashMap<String, usize>> = HashMap::new();
+        let mut fakes = HashSet::with_capacity(vault.entries.len());
+        for (index, entry) in vault.entries.iter().enumerate() {
+            by_real
+                .entry(entry.category)
+                .or_default()
+                .insert(entry.real.clone(), index);
+            fakes.insert(entry.fake.clone());
+        }
+        Self {
+            vault,
+            by_real,
+            fakes,
+        }
+    }
+
+    #[must_use]
+    pub fn into_vault(self) -> Vault {
+        self.vault
+    }
+
+    #[must_use]
+    pub fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.vault.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.vault.entries.is_empty()
+    }
+}
+
+impl SurrogateStore for IndexedVault {
+    fn surrogate_for(&mut self, category: Category, real: &str, rng: &mut Rng) -> String {
+        if let Some(&index) = self.by_real.get(&category).and_then(|map| map.get(real)) {
+            return self.vault.entries[index].fake.clone();
+        }
+        let fake = unique_fake_checked(category, rng, |candidate| self.fakes.contains(candidate));
+        let index = self.vault.entries.len();
+        self.vault.entries.push(VaultEntry {
+            category,
+            real: real.to_string(),
+            fake: fake.clone(),
+        });
+        self.by_real
+            .entry(category)
+            .or_default()
+            .insert(real.to_string(), index);
+        self.fakes.insert(fake.clone());
+        fake
     }
 }
 
@@ -227,17 +313,22 @@ pub fn anonymize(text: &str, spans: &[PiiSpan], rng: &mut Rng) -> (String, Vault
 }
 
 #[must_use]
-pub fn anonymize_into(text: &str, spans: &[PiiSpan], rng: &mut Rng, vault: &mut Vault) -> String {
-    let (result, _) = anonymize_with_subs(text, spans, rng, vault);
+pub fn anonymize_into<S: SurrogateStore>(
+    text: &str,
+    spans: &[PiiSpan],
+    rng: &mut Rng,
+    store: &mut S,
+) -> String {
+    let (result, _) = anonymize_with_subs(text, spans, rng, store);
     result
 }
 
 #[must_use]
-pub fn anonymize_with_subs(
+pub fn anonymize_with_subs<S: SurrogateStore>(
     text: &str,
     spans: &[PiiSpan],
     rng: &mut Rng,
-    vault: &mut Vault,
+    store: &mut S,
 ) -> (String, Vec<(String, String)>) {
     let mut ordered: Vec<&PiiSpan> = spans.iter().collect();
     ordered.sort_by_key(|span| span.start);
@@ -252,7 +343,7 @@ pub fn anonymize_with_subs(
         if let Some(prefix) = text.get(cursor..span.start) {
             result.push_str(prefix);
         }
-        let fake = vault.surrogate_for(span.category, &span.text, rng);
+        let fake = store.surrogate_for(span.category, &span.text, rng);
         result.push_str(&fake);
         subs.push((span.text.clone(), fake));
         cursor = span.end;
@@ -302,10 +393,14 @@ pub fn deanonymize(text: &str, vault: &Vault) -> String {
     result
 }
 
-fn unique_fake(category: Category, rng: &mut Rng, vault: &Vault) -> String {
+fn unique_fake_checked(
+    category: Category,
+    rng: &mut Rng,
+    is_taken: impl Fn(&str) -> bool,
+) -> String {
     for _ in 0..64 {
         let candidate = generate_fake(category, rng);
-        if !vault.entries.iter().any(|entry| entry.fake == candidate) {
+        if !is_taken(&candidate) {
             return candidate;
         }
     }
@@ -469,6 +564,44 @@ mod tests {
         assert_eq!(vault.entries.len(), 2);
         assert_eq!(vault.entries[0].real, "Bbb");
         assert_eq!(vault.entries[1].real, "Ccc");
+    }
+
+    #[test]
+    fn indexed_vault_matches_plain_vault_surrogates() {
+        let calls = [
+            (Category::PrivatePerson, "Alice"),
+            (Category::PrivateEmail, "a@b.com"),
+            (Category::PrivatePerson, "Alice"),
+            (Category::PrivatePerson, "Bob"),
+            (Category::PrivateEmail, "a@b.com"),
+            (Category::AccountNumber, "12345"),
+        ];
+        let mut plain = Vault::default();
+        let mut plain_rng = Rng::new(123);
+        let mut indexed = IndexedVault::new();
+        let mut indexed_rng = Rng::new(123);
+        for (category, real) in calls {
+            let from_plain = plain.surrogate_for(category, real, &mut plain_rng);
+            let from_indexed = indexed.surrogate_for(category, real, &mut indexed_rng);
+            assert_eq!(from_plain, from_indexed);
+        }
+        assert_eq!(plain.entries.len(), indexed.len());
+        assert_eq!(indexed.len(), 4);
+    }
+
+    #[test]
+    fn indexed_vault_round_trips_through_deanonymize() {
+        let text = "Email John Smith at john@corp.com today";
+        let spans = vec![
+            span(Category::PrivatePerson, 6, 16, "John Smith"),
+            span(Category::PrivateEmail, 20, 33, "john@corp.com"),
+        ];
+        let mut rng = Rng::new(42);
+        let mut indexed = IndexedVault::new();
+        let anonymized = anonymize_into(text, &spans, &mut rng, &mut indexed);
+        assert_ne!(anonymized, text);
+        let vault = indexed.into_vault();
+        assert_eq!(deanonymize(&anonymized, &vault), text);
     }
 
     #[test]

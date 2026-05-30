@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use id4pii_core::eval::{Example, load_tsv};
 use id4pii_core::{
-    Category, PiiSpan, Rng, Vault, VaultEntry, anonymize_with_subs, deanonymize, regex_scan,
+    Category, IndexedVault, PiiSpan, Rng, SurrogateStore, Vault, VaultEntry, anonymize_with_subs,
+    deanonymize, regex_scan,
 };
 
 fn dataset_path() -> PathBuf {
@@ -166,12 +167,44 @@ fn bench_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_vault_scaling(c: &mut Criterion) {
+    const UNIQUE: usize = 4000;
+    let values: Vec<(Category, String)> = (0..UNIQUE)
+        .map(|i| (Category::PrivatePerson, format!("Unique Person Number {i}")))
+        .collect();
+
+    let mut group = c.benchmark_group("vault_scaling");
+    group.throughput(Throughput::Elements(UNIQUE as u64));
+    group.bench_function("indexed_unique_inserts", |b| {
+        b.iter(|| {
+            let mut rng = Rng::new(1);
+            let mut vault = IndexedVault::new();
+            for (category, real) in &values {
+                black_box(vault.surrogate_for(*category, real, &mut rng));
+            }
+            black_box(vault.len())
+        });
+    });
+    group.bench_function("plain_unique_inserts", |b| {
+        b.iter(|| {
+            let mut rng = Rng::new(1);
+            let mut vault = Vault::default();
+            for (category, real) in &values {
+                black_box(vault.surrogate_for(*category, real, &mut rng));
+            }
+            black_box(vault.entries.len())
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse,
     bench_detect_regex,
     bench_anonymize,
     bench_deanonymize,
-    bench_scaling
+    bench_scaling,
+    bench_vault_scaling
 );
 criterion_main!(benches);

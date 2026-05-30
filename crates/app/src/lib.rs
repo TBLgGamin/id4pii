@@ -5,6 +5,7 @@
     clippy::cast_possible_wrap
 )]
 
+pub mod batch;
 pub mod cli;
 #[cfg(windows)]
 pub mod guard;
