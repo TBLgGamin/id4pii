@@ -50,7 +50,7 @@ crates/id4pii/
     cli.rs main.rs           subcommand dispatch (scan/anonymize/deanonymize/batch/serve/daemon/…)
     serve.rs                 HTTP API over the shared service (coalescing)
     batch.rs                 streaming corpus pipeline over the shared service (FIFO)
-    extract.rs               same-shape file anonymization (OOXML/PDF plan -> rewrite)
+    document.rs              same-shape file anonymization (OOXML/PDF plan -> rewrite)
     model_setup.rs           load_detector() = ensure_model + Detector::load (used everywhere)
     install.rs logging.rs progress.rs
     daemon/                  the system-tray app (cfg(windows))
@@ -163,7 +163,7 @@ All five are thin adapters over the same engine.
   no detector, no vault — it is just another command source on the daemon's bus
   over a loopback WebSocket. One adapter per site under `extension/src/adapters/`;
   the shared `main/core.js` owns fetch/XHR patching, streaming restore, and the
-  file-upload path (`anonymize_file` → `extract.rs` plan/rewrite, same file type
+  file-upload path (`anonymize_file` → `document.rs` plan/rewrite, same file type
   in, same out).
 
 ## Invariants — do not break these

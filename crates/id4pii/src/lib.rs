@@ -22,7 +22,7 @@ pub mod cli;
 #[cfg(windows)]
 pub mod daemon;
 mod detector_service;
-pub mod extract;
+pub mod document;
 #[cfg(windows)]
 pub mod install;
 pub mod logging;

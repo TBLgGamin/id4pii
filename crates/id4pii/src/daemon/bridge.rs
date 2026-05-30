@@ -444,11 +444,11 @@ async fn run_file_op(
 ) -> String {
     let filename_for_plan = filename;
     let planned =
-        tokio::task::spawn_blocking(move || -> Result<crate::extract::DocPlan, String> {
+        tokio::task::spawn_blocking(move || -> Result<crate::document::DocPlan, String> {
             let bytes = BASE64_STANDARD
                 .decode(data_b64.as_bytes())
                 .map_err(|e| format!("base64 decode failed: {e}"))?;
-            crate::extract::plan(&bytes, &filename_for_plan).map_err(|e| e.to_string())
+            crate::document::plan(&bytes, &filename_for_plan).map_err(|e| e.to_string())
         })
         .await;
 
@@ -471,7 +471,7 @@ async fn run_file_op(
     let count = placements.len();
 
     let finished =
-        tokio::task::spawn_blocking(move || -> Result<crate::extract::RewriteOutput, String> {
+        tokio::task::spawn_blocking(move || -> Result<crate::document::RewriteOutput, String> {
             plan.finish(&placements).map_err(|e| e.to_string())
         })
         .await;
