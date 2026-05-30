@@ -4,7 +4,7 @@
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
 
-use include_dir::{Dir, include_dir};
+use resvg::usvg;
 use tiny_skia::Pixmap;
 use tracing::error;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -33,8 +33,10 @@ const H: i32 = 160;
 const FRAME_MS: u64 = 16;
 const HOLD_MS: u64 = 120;
 const FADE_MS: u64 = 200;
-
-static FRAMES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../assets/lock_frames");
+const FRAME_COUNT: usize = 28;
+const OPEN_ANGLE: f32 = -46.0;
+const ACCENT: &str = "#F5A524";
+const HOLE: &str = "#7A4E06";
 
 pub(crate) fn show(kind: Kind, x: i32, y: i32) {
     std::thread::spawn(move || {
@@ -88,26 +90,58 @@ fn frames_for(kind: Kind) -> &'static [Pixmap] {
     static CLOSE: OnceLock<Vec<Pixmap>> = OnceLock::new();
     static OPEN: OnceLock<Vec<Pixmap>> = OnceLock::new();
     match kind {
-        Kind::Anonymize => CLOSE.get_or_init(|| load("close_")),
-        Kind::Restore => OPEN.get_or_init(|| load("open_")),
+        Kind::Anonymize => CLOSE.get_or_init(|| render_frames(true)),
+        Kind::Restore => OPEN.get_or_init(|| render_frames(false)),
     }
 }
 
-fn load(prefix: &str) -> Vec<Pixmap> {
-    let mut files: Vec<&include_dir::File> = FRAMES
-        .files()
-        .filter(|f| {
-            f.path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(prefix))
+fn render_frames(closing: bool) -> Vec<Pixmap> {
+    (0..FRAME_COUNT)
+        .filter_map(|i| {
+            let t = if FRAME_COUNT <= 1 {
+                1.0
+            } else {
+                i as f32 / (FRAME_COUNT as f32 - 1.0)
+            };
+            let scale = 0.55 + 0.45 * ease_out_back(t);
+            let angle = if closing {
+                OPEN_ANGLE + (-OPEN_ANGLE) * ease_out_back(t)
+            } else {
+                OPEN_ANGLE * ease_out_cubic(t)
+            };
+            render_svg(angle, scale)
         })
-        .collect();
-    files.sort_by(|a, b| a.path().cmp(b.path()));
-    files
-        .into_iter()
-        .filter_map(|f| Pixmap::decode_png(f.contents()).ok())
         .collect()
+}
+
+fn render_svg(angle: f32, scale: f32) -> Option<Pixmap> {
+    let svg = lock_svg(angle, scale);
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).ok()?;
+    let mut pixmap = Pixmap::new(W as u32, H as u32)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    Some(pixmap)
+}
+
+fn lock_svg(angle: f32, scale: f32) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="-8 -4 40 32"><g transform="translate(12 12) scale({scale}) translate(-12 -12)"><g transform="rotate({angle} 16.5 11)"><path d="M7.5 11 V8 a4.5 4.5 0 0 1 9 0 V11" fill="none" stroke="{ACCENT}" stroke-width="2.4" stroke-linecap="round"/></g><rect x="4.5" y="10.5" width="15" height="11" rx="2.6" fill="{ACCENT}"/><circle cx="12" cy="15" r="1.7" fill="{HOLE}"/><rect x="11.2" y="15" width="1.6" height="3.4" rx="0.8" fill="{HOLE}"/></g></svg>"#
+    )
+}
+
+fn ease_out_back(t: f32) -> f32 {
+    let c1 = 1.9_f32;
+    let c3 = c1 + 1.0;
+    let u = t - 1.0;
+    1.0 + c3 * u * u * u + c1 * u * u
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    let u = 1.0 - t;
+    1.0 - u * u * u
 }
 
 fn apply_alpha(src: &Pixmap, dst: &mut Pixmap, alpha: f32) {

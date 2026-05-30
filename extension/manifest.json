@@ -63,7 +63,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/lock_frames/*", "assets/icon-*.png"],
+      "resources": ["assets/icon-*.png"],
       "matches": [
         "*://chatgpt.com/*",
         "*://*.openai.com/*",

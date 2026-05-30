@@ -36,6 +36,10 @@ serde = { workspace = true }
 serde_json.workspace = true
 indicatif.workspace = true
 futures-util = "0.3"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+quick-xml = "0.40.1"
+pdf-extract = "0.10.0"
+base64 = "0.22.1"
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true
@@ -45,8 +49,8 @@ global-hotkey.workspace = true
 arboard.workspace = true
 enigo.workspace = true
 tiny-skia.workspace = true
+resvg.workspace = true
 windows.workspace = true
-include_dir.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

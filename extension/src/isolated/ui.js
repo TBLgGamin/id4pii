@@ -1,81 +1,85 @@
 window.id4pii = window.id4pii || {};
 window.id4pii.ui = (() => {
-  const SIZE_W = 200;
-  const SIZE_H = 160;
-  const MARGIN = 12;
-  const HOLD_MS = 120;
-  const FADE_MS = 200;
-  const FRAME_MS = 16;
-  const CLOSE_COUNT = 21;
-  const OPEN_COUNT = 23;
+  const SIZE = 40;
+  const GAP = 6;
+  const PLAY_MS = 540;
+  const HOLD_MS = 160;
+  const FADE_MS = 220;
 
-  function frameUrls(kind) {
-    const prefix = kind === "anonymize" ? "close_" : "open_";
-    const count = kind === "anonymize" ? CLOSE_COUNT : OPEN_COUNT;
-    const urls = [];
-    for (let i = 0; i < count; i++) {
-      const idx = String(i).padStart(2, "0");
-      urls.push(chrome.runtime.getURL(`assets/lock_frames/${prefix}${idx}.png`));
-    }
-    return urls;
+  let mouseX = -1;
+  let mouseY = -1;
+  let active = null;
+
+  function trackPointer(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    if (active) place(active.host);
+  }
+  window.addEventListener("pointermove", trackPointer, true);
+  window.addEventListener("mousemove", trackPointer, true);
+
+  function place(host) {
+    let left = mouseX < 0 ? window.innerWidth - SIZE - 16 : mouseX + GAP;
+    let top = mouseY < 0 ? 16 : mouseY - SIZE + 4;
+    left = Math.max(4, Math.min(window.innerWidth - SIZE - 4, left));
+    top = Math.max(4, Math.min(window.innerHeight - SIZE - 4, top));
+    host.style.left = `${left}px`;
+    host.style.top = `${top}px`;
   }
 
-  function resolveRect(anchor) {
-    if (!anchor) return null;
-    if (typeof anchor.getBoundingClientRect === "function") return anchor.getBoundingClientRect();
-    if (typeof anchor === "object" && "left" in anchor) return anchor;
-    return null;
+  function markup(kind) {
+    const blocked = kind === "blocked";
+    const closing = kind !== "restore";
+    const accent = blocked ? "#E5484D" : "#F5A524";
+    const hole = blocked ? "#5C1A1C" : "#7A4E06";
+    const shackleKeyframes = closing
+      ? "@keyframes id4-shackle{0%{transform:rotate(-46deg)}58%{transform:rotate(7deg)}100%{transform:rotate(0)}}"
+      : "@keyframes id4-shackle{0%{transform:rotate(0)}100%{transform:rotate(-46deg)}}";
+    return `
+<style>
+  .wrap{width:100%;height:100%;animation:id4-pop ${PLAY_MS}ms cubic-bezier(.2,.85,.25,1.15) both}
+  svg{width:100%;height:100%;display:block;overflow:visible;filter:drop-shadow(0 1px 3px rgba(0,0,0,.4))}
+  .body{fill:${accent}}
+  .hole{fill:${hole}}
+  .shackle{fill:none;stroke:${accent};stroke-width:2.4;stroke-linecap:round;transform-box:fill-box;transform-origin:100% 100%;animation:id4-shackle ${PLAY_MS}ms cubic-bezier(.34,1.35,.5,1) both}
+  @keyframes id4-pop{0%{transform:scale(.55);opacity:0}40%{opacity:1}100%{transform:scale(1);opacity:1}}
+  ${shackleKeyframes}
+</style>
+<div class="wrap">
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="shackle" d="M7.5 11 V8 a4.5 4.5 0 0 1 9 0 V11" />
+    <rect class="body" x="4.5" y="10.5" width="15" height="11" rx="2.6" />
+    <circle class="hole" cx="12" cy="15" r="1.7" />
+    <rect class="hole" x="11.2" y="15" width="1.6" height="3.4" rx="0.8" />
+  </svg>
+</div>`;
   }
 
-  function placement(anchor) {
-    const rect = resolveRect(anchor);
-    if (!rect) {
-      return {
-        left: Math.max(MARGIN, window.innerWidth - SIZE_W - MARGIN),
-        top: MARGIN,
-      };
-    }
-    let desiredLeft;
-    let desiredTop;
-    if (anchor && anchor.cursor) {
-      desiredLeft = rect.left - 70;
-      desiredTop = rect.top - 50;
-    } else {
-      desiredLeft = rect.left + rect.width - SIZE_W;
-      desiredTop = rect.top - SIZE_H - 8;
-    }
-    return {
-      left: Math.max(MARGIN, Math.min(window.innerWidth - SIZE_W - MARGIN, desiredLeft)),
-      top: Math.max(MARGIN, Math.min(window.innerHeight - SIZE_H - MARGIN, desiredTop)),
+  function signal(kind) {
+    if (active) return;
+
+    const host = document.createElement("div");
+    host.dataset.id4pii = "lock";
+    host.style.cssText = `all:initial;position:fixed;width:${SIZE}px;height:${SIZE}px;z-index:2147483647;pointer-events:none;opacity:1;transition:opacity ${FADE_MS}ms ease`;
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML = markup(kind);
+    (document.body || document.documentElement).appendChild(host);
+    place(host);
+
+    let removed = false;
+    const cleanup = () => {
+      if (removed) return;
+      removed = true;
+      host.remove();
+      if (active && active.host === host) active = null;
     };
+    active = { host, cleanup };
+
+    setTimeout(() => {
+      host.style.opacity = "0";
+      setTimeout(cleanup, FADE_MS);
+    }, PLAY_MS + HOLD_MS);
   }
 
-  function show(kind, anchor) {
-    const { left, top } = placement(anchor);
-    const overlay = document.createElement("div");
-    overlay.dataset.id4pii = "overlay";
-    overlay.style.cssText = `position:fixed;left:${left}px;top:${top}px;width:${SIZE_W}px;height:${SIZE_H}px;z-index:2147483647;pointer-events:none;opacity:1;transition:opacity ${FADE_MS}ms linear;`;
-    const img = document.createElement("img");
-    img.alt = "";
-    img.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
-    overlay.appendChild(img);
-    (document.body || document.documentElement).appendChild(overlay);
-
-    const urls = frameUrls(kind);
-    let i = 0;
-    const tick = () => {
-      if (i >= urls.length) {
-        setTimeout(() => {
-          overlay.style.opacity = "0";
-          setTimeout(() => overlay.remove(), FADE_MS);
-        }, HOLD_MS);
-        return;
-      }
-      img.src = urls[i++];
-      setTimeout(tick, FRAME_MS);
-    };
-    tick();
-  }
-
-  return { show };
+  return { signal };
 })();
