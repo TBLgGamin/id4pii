@@ -8,9 +8,9 @@ use id4pii_core::{
 };
 use serde::Serialize;
 
+use crate::{batch, logging, model_setup, serve};
 #[cfg(windows)]
 use crate::{guard, install};
-use crate::{batch, logging, model_setup, serve};
 
 #[derive(Parser, Debug)]
 #[command(

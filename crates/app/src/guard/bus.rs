@@ -3,6 +3,8 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
+use id4pii_core::Placement;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpKind {
     Anonymize,
@@ -53,6 +55,12 @@ pub(crate) enum Command {
         text: String,
         reply: SyncSender<BridgeReply>,
     },
+    AnonymizeSpans {
+        req_id: String,
+        source: Source,
+        text: String,
+        reply: SyncSender<BridgeReply>,
+    },
     RestoreText {
         req_id: String,
         source: Source,
@@ -71,6 +79,9 @@ pub(crate) enum BridgeReply {
         text: String,
         subs: Vec<(String, String)>,
         count: usize,
+    },
+    AnonymizedSpans {
+        placements: Vec<Placement>,
     },
     Restored {
         text: String,

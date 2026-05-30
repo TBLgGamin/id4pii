@@ -7,6 +7,7 @@
 
 pub mod batch;
 pub mod cli;
+pub mod extract;
 #[cfg(windows)]
 pub mod guard;
 #[cfg(windows)]

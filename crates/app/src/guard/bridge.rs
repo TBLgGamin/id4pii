@@ -11,6 +11,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use base64::{Engine as _, prelude::BASE64_STANDARD};
 use futures_util::{SinkExt, StreamExt};
 use id4pii_core::Vault;
 use serde::{Deserialize, Serialize};
@@ -148,6 +149,12 @@ enum ClientMessage {
         id: String,
         text: String,
     },
+    AnonymizeFile {
+        id: String,
+        #[serde(default)]
+        filename: String,
+        data: String,
+    },
     Restore {
         id: String,
         text: String,
@@ -174,6 +181,12 @@ enum ServerMessage<'a> {
         id: String,
         text: String,
         subs: Vec<[String; 2]>,
+        count: usize,
+    },
+    AnonymizedFile {
+        id: String,
+        data: String,
+        mime: &'a str,
         count: usize,
     },
     Restored {
@@ -302,6 +315,19 @@ async fn handle_client_message(
             debug!(client_id, req_id = %id, msg_type = "anonymize-reply", body_len = out.len(), "ws-msg-out");
             Some(out)
         }
+        ClientMessage::AnonymizeFile { id, filename, data } => {
+            debug!(client_id, req_id = %id, msg_type = "anonymize_file", filename_len = filename.len(), data_len = data.len(), "ws-msg-in");
+            let out = run_file_op(
+                command_tx,
+                id.clone(),
+                Source::Browser { client_id },
+                filename,
+                data,
+            )
+            .await;
+            debug!(client_id, req_id = %id, msg_type = "anonymize-file-reply", body_len = out.len(), "ws-msg-out");
+            Some(out)
+        }
         ClientMessage::Restore { id, text } => {
             debug!(client_id, req_id = %id, msg_type = "restore", text_len = text.len(), "ws-msg-in");
             let reply = run_text_op(
@@ -409,6 +435,93 @@ async fn run_text_op(
     received.map_err(|e| format!("engine reply: {e}"))
 }
 
+async fn run_file_op(
+    command_tx: &StdSyncSender<Command>,
+    req_id: String,
+    source: Source,
+    filename: String,
+    data_b64: String,
+) -> String {
+    let filename_for_plan = filename;
+    let planned =
+        tokio::task::spawn_blocking(move || -> Result<crate::extract::DocPlan, String> {
+            let bytes = BASE64_STANDARD
+                .decode(data_b64.as_bytes())
+                .map_err(|e| format!("base64 decode failed: {e}"))?;
+            crate::extract::plan(&bytes, &filename_for_plan).map_err(|e| e.to_string())
+        })
+        .await;
+
+    let plan = match planned {
+        Ok(Ok(plan)) => plan,
+        Ok(Err(msg)) => return file_error(req_id, msg),
+        Err(join) => return file_error(req_id, format!("plan task failed: {join}")),
+    };
+
+    let placements = if plan.text.trim().is_empty() {
+        Vec::new()
+    } else {
+        match run_spans_op(command_tx, req_id.clone(), source, plan.text.clone()).await {
+            Ok(BridgeReply::AnonymizedSpans { placements, .. }) => placements,
+            Ok(BridgeReply::NoChange { .. }) => Vec::new(),
+            Ok(other) => return file_error(req_id, format!("unexpected engine reply: {other:?}")),
+            Err(msg) => return file_error(req_id, msg),
+        }
+    };
+    let count = placements.len();
+
+    let finished =
+        tokio::task::spawn_blocking(move || -> Result<crate::extract::RewriteOutput, String> {
+            plan.finish(&placements).map_err(|e| e.to_string())
+        })
+        .await;
+    let output = match finished {
+        Ok(Ok(output)) => output,
+        Ok(Err(msg)) => return file_error(req_id, msg),
+        Err(join) => return file_error(req_id, format!("rewrite task failed: {join}")),
+    };
+
+    let data = BASE64_STANDARD.encode(&output.data);
+    serde_json::to_string(&ServerMessage::AnonymizedFile {
+        id: req_id,
+        data,
+        mime: output.mime,
+        count,
+    })
+    .unwrap_or_else(|_| String::from("{\"type\":\"error\"}"))
+}
+
+async fn run_spans_op(
+    command_tx: &StdSyncSender<Command>,
+    req_id: String,
+    source: Source,
+    text: String,
+) -> Result<BridgeReply, String> {
+    let (reply_tx, reply_rx) = sync_channel::<BridgeReply>(1);
+    let cmd = Command::AnonymizeSpans {
+        req_id,
+        source,
+        text,
+        reply: reply_tx,
+    };
+    let tx = command_tx.clone();
+    let send_result = tokio::task::spawn_blocking(move || tx.try_send(cmd))
+        .await
+        .map_err(|e| format!("join: {e}"))?;
+    if let Err(err) = send_result {
+        return Err(format!("engine busy: {err}"));
+    }
+    let received = tokio::task::spawn_blocking(move || reply_rx.recv_timeout(COMMAND_TIMEOUT))
+        .await
+        .map_err(|e| format!("join: {e}"))?;
+    received.map_err(|e| format!("engine reply: {e}"))
+}
+
+fn file_error(id: String, message: String) -> String {
+    serde_json::to_string(&ServerMessage::Error { id, message })
+        .unwrap_or_else(|_| String::from("{\"type\":\"error\"}"))
+}
+
 fn serialize_reply(id: String, reply: Result<BridgeReply, String>) -> String {
     let msg = match reply {
         Ok(BridgeReply::Anonymized { text, subs, count }) => ServerMessage::Anonymized {
@@ -416,6 +529,10 @@ fn serialize_reply(id: String, reply: Result<BridgeReply, String>) -> String {
             text,
             subs: subs.into_iter().map(|(real, fake)| [fake, real]).collect(),
             count,
+        },
+        Ok(BridgeReply::AnonymizedSpans { .. }) => ServerMessage::Error {
+            id,
+            message: "unexpected spans reply on text path".to_string(),
         },
         Ok(BridgeReply::Restored { text, count }) => ServerMessage::Restored { id, text, count },
         Ok(BridgeReply::NoChange { reason }) => ServerMessage::NoChange {

@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use id4pii_core::{Detector, PiiSpan, Rng, Vault, anonymize_with_subs, deanonymize};
+use id4pii_core::{
+    Detector, PiiSpan, Placement, Rng, Vault, anonymize_placements, anonymize_with_subs,
+    apply_placements, deanonymize,
+};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::automation;
@@ -24,7 +27,7 @@ pub(crate) trait Detect: Send {
 
 impl Detect for Detector {
     fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
-        Detector::detect(self, text, min_score).map_err(|e| anyhow!("{e}"))
+        Detector::detect_windowed(self, text, min_score).map_err(|e| anyhow!("{e}"))
     }
 }
 
@@ -52,6 +55,16 @@ impl Field for UiaField {
 pub(crate) struct EngineConfig {
     pub min_score: f32,
     pub max_vault_entries: usize,
+}
+
+enum AnonOutcome {
+    Done {
+        placements: Vec<Placement>,
+        subs: Vec<(String, String)>,
+        count: usize,
+    },
+    NoChange(NoChangeReason),
+    Failed(String),
 }
 
 pub(crate) struct Engine {
@@ -193,7 +206,17 @@ impl Engine {
                 reply,
             } => {
                 self.status.begin(OpKind::Anonymize);
-                self.handle_anonymize_text(req_id, source, &text, &reply);
+                self.handle_anonymize_text(&req_id, source, &text, &reply);
+                self.status.end();
+            }
+            Command::AnonymizeSpans {
+                req_id,
+                source,
+                text,
+                reply,
+            } => {
+                self.status.begin(OpKind::Anonymize);
+                self.handle_anonymize_spans(&req_id, source, &text, &reply);
                 self.status.end();
             }
             Command::RestoreText {
@@ -506,27 +529,57 @@ impl Engine {
         });
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[instrument(skip_all, fields(req_id = %req_id, kind = "anonymize-text"))]
     fn handle_anonymize_text(
         &mut self,
-        req_id: String,
+        req_id: &str,
         source: Source,
         text: &str,
         reply: &SyncSender<BridgeReply>,
     ) {
+        let response = match self.anonymize_core(req_id, source, text) {
+            AnonOutcome::Done {
+                placements,
+                subs,
+                count,
+                ..
+            } => BridgeReply::Anonymized {
+                text: apply_placements(text, &placements),
+                subs,
+                count,
+            },
+            AnonOutcome::NoChange(reason) => BridgeReply::NoChange { reason },
+            AnonOutcome::Failed(error) => BridgeReply::Failed { error },
+        };
+        let _ = reply.try_send(response);
+    }
+
+    fn handle_anonymize_spans(
+        &mut self,
+        req_id: &str,
+        source: Source,
+        text: &str,
+        reply: &SyncSender<BridgeReply>,
+    ) {
+        let response = match self.anonymize_core(req_id, source, text) {
+            AnonOutcome::Done { placements, .. } => BridgeReply::AnonymizedSpans { placements },
+            AnonOutcome::NoChange(reason) => BridgeReply::NoChange { reason },
+            AnonOutcome::Failed(error) => BridgeReply::Failed { error },
+        };
+        let _ = reply.try_send(response);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[instrument(skip_all, fields(req_id = %req_id, kind = "anonymize-core"))]
+    fn anonymize_core(&mut self, req_id: &str, source: Source, text: &str) -> AnonOutcome {
         let started = Instant::now();
         if text.trim().is_empty() {
             self.bus.publish(&Event::OperationNoChange {
-                req_id: req_id.clone(),
+                req_id: req_id.to_string(),
                 kind: OpKind::Anonymize,
                 reason: NoChangeReason::EmptyField,
                 source,
             });
-            let _ = reply.try_send(BridgeReply::NoChange {
-                reason: NoChangeReason::EmptyField,
-            });
-            return;
+            return AnonOutcome::NoChange(NoChangeReason::EmptyField);
         }
 
         self.status.step("detect");
@@ -537,13 +590,12 @@ impl Engine {
                 error!("detection: {err}");
                 let msg = format!("detection failed: {err}");
                 self.bus.publish(&Event::OperationFailed {
-                    req_id: req_id.clone(),
+                    req_id: req_id.to_string(),
                     kind: OpKind::Anonymize,
                     error: msg.clone(),
                     source,
                 });
-                let _ = reply.try_send(BridgeReply::Failed { error: msg });
-                return;
+                return AnonOutcome::Failed(msg);
             }
         };
         debug!(
@@ -556,18 +608,15 @@ impl Engine {
 
         let vault_size_before = vault_lock(&self.vault, |v| v.entries.len());
         let mut candidate = vault_lock(&self.vault, |v| v.clone());
-        let (output, subs) = anonymize_with_subs(text, &spans, &mut self.rng, &mut candidate);
-        if output == text {
+        let (placements, subs) = anonymize_placements(text, &spans, &mut self.rng, &mut candidate);
+        if placements.is_empty() {
             self.bus.publish(&Event::OperationNoChange {
-                req_id: req_id.clone(),
+                req_id: req_id.to_string(),
                 kind: OpKind::Anonymize,
                 reason: NoChangeReason::NoPii,
                 source,
             });
-            let _ = reply.try_send(BridgeReply::NoChange {
-                reason: NoChangeReason::NoPii,
-            });
-            return;
+            return AnonOutcome::NoChange(NoChangeReason::NoPii);
         }
 
         let evicted = candidate.enforce_cap(self.max_vault_entries);
@@ -593,13 +642,12 @@ impl Engine {
                     error: err.to_string(),
                 });
                 self.bus.publish(&Event::OperationFailed {
-                    req_id: req_id.clone(),
+                    req_id: req_id.to_string(),
                     kind: OpKind::Anonymize,
                     error: msg.clone(),
                     source,
                 });
-                let _ = reply.try_send(BridgeReply::Failed { error: msg });
-                return;
+                return AnonOutcome::Failed(msg);
             }
         }
 
@@ -613,20 +661,20 @@ impl Engine {
             .collect();
         debug!(subs_count = added.len(), "vault-delta-publish");
         self.bus.publish(&Event::VaultDelta {
-            req_id: req_id.clone(),
+            req_id: req_id.to_string(),
             added,
         });
         self.bus.publish(&Event::OperationCompleted {
-            req_id,
+            req_id: req_id.to_string(),
             kind: OpKind::Anonymize,
             summary: OpSummary::Anonymized { count },
             source,
         });
-        let _ = reply.try_send(BridgeReply::Anonymized {
-            text: output,
+        AnonOutcome::Done {
+            placements,
             subs,
             count,
-        });
+        }
     }
 
     #[instrument(skip_all, fields(req_id = %req_id, kind = "clear-vault"))]

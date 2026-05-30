@@ -5,6 +5,7 @@
 
   const SURROGATE_BUFFER = 80;
   const REQUEST_TIMEOUT_MS = 30000;
+  const FILE_REQUEST_TIMEOUT_MS = 90000;
   const MIN_INTERESTING_BODY = 8;
   const RESPONSE_CHUNK_LOG_SAMPLE = 8;
   const MAX_CANDIDATES_PER_REQUEST = 4;
@@ -34,6 +35,126 @@
       pending.set(reqId, { resolve, reject, timer });
       sendToIsolated({ type: "anonymize-request", id: reqId, text });
     });
+  }
+
+  function callAnonymizeFile(reqId, filename, dataB64) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (pending.has(reqId)) { pending.delete(reqId); reject("timeout"); }
+      }, FILE_REQUEST_TIMEOUT_MS);
+      pending.set(reqId, { resolve, reject, timer });
+      sendToIsolated({ type: "anonymize-file-request", id: reqId, filename, data: dataB64 });
+    });
+  }
+
+  function blockError(reason) {
+    const e = new Error(`id4pii blocked unanonymizable file: ${reason}`);
+    e.id4piiBlock = true;
+    return e;
+  }
+
+  function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  const fileAnonymizeCache = new Map();
+
+  function fileCacheKey(file) {
+    return `${file.name}|${file.size}|${file.lastModified}`;
+  }
+
+  function anonymizeFileInPlace(reqId, file) {
+    const key = fileCacheKey(file);
+    if (fileAnonymizeCache.has(key)) return fileAnonymizeCache.get(key);
+    const work = (async () => {
+      let dataB64;
+      try {
+        dataB64 = arrayBufferToBase64(await file.arrayBuffer());
+      } catch (err) {
+        throw blockError(`read failed: ${String(err)}`);
+      }
+      let reply;
+      try {
+        reply = await callAnonymizeFile(`${reqId}-file`, file.name || "upload", dataB64);
+      } catch (err) {
+        throw blockError(String(err));
+      }
+      if (!reply || typeof reply.data !== "string" || reply.data.length === 0) throw blockError("empty result");
+      const bytes = base64ToBytes(reply.data);
+      LOG.debug("main", "file-anonymized", { reqId, name: file.name, count: reply.count, bytesAfter: bytes.length });
+      return new File([bytes], file.name, { type: reply.mime || file.type || "application/octet-stream" });
+    })().catch((err) => { fileAnonymizeCache.delete(key); throw err; });
+    fileAnonymizeCache.set(key, work);
+    return work;
+  }
+
+  const UPLOAD_BINARY_RE = /\.(?:docx|pptx|xlsx|pdf)$/i;
+  const UPLOAD_TEXT_RE = /\.(?:txt|text|csv|tsv|md|markdown|json|jsonl|ndjson|log|xml|html?|rtf|tex|srt|vtt|sql|ya?ml|toml|ini|cfg|conf|sh|bash|ps1|py|js|ts|jsx|tsx|c|h|cpp|cc|java|rb|go|rs|php|css|scss)$/i;
+  const UPLOAD_TEXT_MIME_RE = /^(?:text\/|application\/(?:json|x-ndjson|xml|csv|x-yaml|yaml|sql|toml))/i;
+
+  function findFilePart(formData) {
+    for (const [field, value] of formData.entries()) {
+      if (value && typeof value === "object" && typeof value.arrayBuffer === "function" && typeof value.name === "string") {
+        return { field, file: value };
+      }
+    }
+    return null;
+  }
+
+  function rebuildFormData(formData, field, replacement) {
+    const fresh = new FormData();
+    for (const [k, v] of formData.entries()) fresh.append(k, k === field ? replacement : v);
+    return fresh;
+  }
+
+  async function anonymizeUpload(reqId, formData) {
+    const part = findFilePart(formData);
+    if (!part) return null;
+    const { field, file } = part;
+    const name = file.name || "";
+    const type = file.type || "";
+
+    if (UPLOAD_BINARY_RE.test(name)) {
+      const rewritten = await anonymizeFileInPlace(reqId, file);
+      LOG.debug("main", "upload-binary-replaced", { reqId, type, outName: rewritten.name, outType: rewritten.type });
+      return rebuildFormData(formData, field, rewritten);
+    }
+
+    if (!(UPLOAD_TEXT_RE.test(name) || UPLOAD_TEXT_MIME_RE.test(type))) {
+      LOG.debug("main", "upload-unsupported-passthrough", { reqId, type });
+      return null;
+    }
+
+    let content;
+    try {
+      content = await file.text();
+    } catch (err) {
+      throw blockError(`text read failed: ${String(err)}`);
+    }
+    if (content.length < MIN_INTERESTING_BODY || containsKnownSurrogate(content)) return null;
+    let out;
+    try {
+      out = await callAnonymize(`${reqId}-file`, content);
+    } catch (err) {
+      if (typeof err === "string" && err.startsWith("no_change:")) return null;
+      throw blockError(`text anonymize failed: ${String(err)}`);
+    }
+    if (typeof out !== "string" || out === content) return null;
+    LOG.debug("main", "upload-text-anonymized", { reqId, lenBefore: content.length, lenAfter: out.length });
+    return rebuildFormData(formData, field, new File([out], name, { type: type || "text/plain" }));
   }
 
   function restoreString(s) {
@@ -193,22 +314,8 @@
     return changed ? JSON.stringify(parsed) : text;
   }
 
-  let cursorX = -1;
-  let cursorY = -1;
-  for (const root of [window, document]) {
-    root.addEventListener("pointermove", (e) => {
-      cursorX = e.clientX;
-      cursorY = e.clientY;
-    }, true);
-    root.addEventListener("mousemove", (e) => {
-      cursorX = e.clientX;
-      cursorY = e.clientY;
-    }, true);
-  }
-
-  function cursorAnchor() {
-    if (cursorX < 0 || cursorY < 0) return null;
-    return { left: cursorX, top: cursorY, width: 0, height: 0, cursor: true };
+  function signalUi(kind) {
+    sendToIsolated({ type: "ui-signal", kind });
   }
 
   function hostMatches(adapter) {
@@ -248,6 +355,13 @@
       clearTimeout(p.timer);
       if (msg.error) p.reject(msg.error);
       else p.resolve(msg.text);
+    } else if (msg.type === "anonymize-file-reply") {
+      const p = pending.get(msg.id);
+      if (!p) return;
+      pending.delete(msg.id);
+      clearTimeout(p.timer);
+      if (msg.error) p.reject(msg.error);
+      else p.resolve({ data: msg.data, mime: msg.mime, count: msg.count });
     }
   });
 
@@ -362,7 +476,7 @@
           const newBody = await adapter.anonymizeBody(api, reqId, rawBody);
           if (newBody !== rawBody && newBody !== undefined) {
             LOG.debug("main", "fetch-body-out", { reqId, adapter: adapter.name, changed: true });
-            sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
+            signalUi("anonymize");
             if (rawBody === newBody) {
 
             } else if (init) {
@@ -376,6 +490,14 @@
             LOG.debug("main", "fetch-body-out", { reqId, adapter: adapter.name, changed: false });
           }
         } catch (err) {
+          if (err && err.id4piiBlock) {
+            LOG.warn("main", "fetch-blocked", { reqId, adapter: adapter.name, reason: String(err.message || err) });
+            signalUi("blocked");
+            return new Response(
+              JSON.stringify({ error: "blocked_by_id4pii", message: "id4pii could not anonymize this file, so the upload was blocked." }),
+              { status: 400, statusText: "blocked by id4pii", headers: { "content-type": "application/json" } }
+            );
+          }
           LOG.warn("main", "fetch-adapter-error", { reqId, adapter: adapter.name, error: String(err) });
         }
       }
@@ -413,12 +535,18 @@
           try {
             const newBody = await adapter.anonymizeBody(api, reqId, bodyArg);
             if (newBody !== bodyArg && newBody !== undefined) {
-              sendToIsolated({ type: "show-overlay", kind: "anonymize", rect: cursorAnchor() });
+              signalUi("anonymize");
               origSend(newBody);
             } else {
               origSend(bodyArg);
             }
           } catch (err) {
+            if (err && err.id4piiBlock) {
+              LOG.warn("main", "xhr-blocked", { reqId, adapter: adapter.name, reason: String(err.message || err) });
+              signalUi("blocked");
+              try { xhr.abort(); } catch (_) {}
+              return;
+            }
             LOG.warn("main", "xhr-adapter-error", { reqId, adapter: adapter.name, error: String(err) });
             origSend(bodyArg);
           }
@@ -535,6 +663,7 @@
       walkStringPaths,
       setAtPath,
       isUserContentPath,
+      anonymizeUpload,
     },
     constants: { MIN_INTERESTING_BODY, MAX_CANDIDATES_PER_REQUEST },
   };

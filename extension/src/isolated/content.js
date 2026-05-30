@@ -101,12 +101,29 @@
       } catch (e) {
         sendToPage({ type: "anonymize-reply", id, error: String(e) });
       }
+    } else if (msg.type === "anonymize-file-request") {
+      const id = msg.id;
+      try {
+        chrome.runtime.sendMessage({ type: "anonymize_file", filename: msg.filename || "", data: msg.data || "", reqId: id }, (resp) => {
+          if (chrome.runtime.lastError) {
+            sendToPage({ type: "anonymize-file-reply", id, error: chrome.runtime.lastError.message || "runtime error" });
+            return;
+          }
+          if (resp && resp.ok && resp.reply && resp.reply.type === "anonymized_file") {
+            sendToPage({ type: "anonymize-file-reply", id, data: resp.reply.data, mime: resp.reply.mime, count: resp.reply.count });
+          } else {
+            sendToPage({ type: "anonymize-file-reply", id, error: (resp && resp.error) || "no_reply" });
+          }
+        });
+      } catch (e) {
+        sendToPage({ type: "anonymize-file-reply", id, error: String(e) });
+      }
     } else if (msg.type === "ready") {
       pushDebugFlagToMain();
       broadcastVault("ready");
       requestVault();
-    } else if (msg.type === "show-overlay") {
-      if (ns.ui && ns.ui.show) ns.ui.show(msg.kind || "anonymize", msg.rect || null);
+    } else if (msg.type === "ui-signal") {
+      if (ns.ui && ns.ui.signal) ns.ui.signal(msg.kind || "anonymize");
     }
   });
 

@@ -6,9 +6,7 @@ use std::thread;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
-use id4pii_core::{
-    Detector, IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact,
-};
+use id4pii_core::{Detector, IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -161,7 +159,9 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
     model_thread
         .join()
         .map_err(|_| anyhow!("model thread panicked"))??;
-    reader.join().map_err(|_| anyhow!("reader thread panicked"))?;
+    reader
+        .join()
+        .map_err(|_| anyhow!("reader thread panicked"))?;
     sink.finish()?;
 
     let entries = vault.len();
@@ -505,7 +505,11 @@ impl<R: BufRead> Iterator for LineSource<R> {
                     });
                 }
                 LineKind::Tsv { column } => {
-                    let text = line.split('\t').nth(*column).unwrap_or_default().to_string();
+                    let text = line
+                        .split('\t')
+                        .nth(*column)
+                        .unwrap_or_default()
+                        .to_string();
                     return Some(Ok(Record {
                         id,
                         text,
@@ -553,14 +557,16 @@ mod tests {
     #[test]
     fn lines_and_tsv_sources_split_as_expected() {
         let lines = collect(LineKind::Lines, "alpha\nbeta\n");
-        assert_eq!(lines.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), [
-            "alpha", "beta"
-        ]);
+        assert_eq!(
+            lines.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
 
         let tsv = collect(LineKind::Tsv { column: 1 }, "a\tb\tc\nd\te\tf\n");
-        assert_eq!(tsv.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), [
-            "b", "e"
-        ]);
+        assert_eq!(
+            tsv.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["b", "e"]
+        );
     }
 
     #[test]

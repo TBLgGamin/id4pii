@@ -196,6 +196,7 @@ function routeServerMessage(msg) {
       break;
     }
     case "anonymized":
+    case "anonymized_file":
     case "restored":
     case "no_change":
     case "error": {
@@ -234,10 +235,12 @@ function broadcastVault(source) {
   });
 }
 
-function callBridge(type, text, reqId) {
+const FILE_REQUEST_TIMEOUT_MS = 90000;
+
+function callBridgeRaw(payload, reqId, timeoutMs) {
   return new Promise((resolve, reject) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      LOG.warn("bg", "req-reject-disconnected", { reqId, type });
+      LOG.warn("bg", "req-reject-disconnected", { reqId, type: payload.type });
       reject("bridge disconnected");
       return;
     }
@@ -245,20 +248,29 @@ function callBridge(type, text, reqId) {
     const timeout = setTimeout(() => {
       if (pending.has(id)) {
         pending.delete(id);
-        LOG.warn("bg", "req-timeout", { reqId: id, type });
+        LOG.warn("bg", "req-timeout", { reqId: id, type: payload.type });
         reject("timeout");
       }
-    }, REQUEST_TIMEOUT_MS);
+    }, timeoutMs || REQUEST_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timeout });
-    LOG.debug("bg", "req-send", { reqId: id, type, textLen: (text || "").length });
-    const sent = safeSend({ type, id, text });
+    const sent = safeSend({ ...payload, id });
     if (!sent) {
       pending.delete(id);
       clearTimeout(timeout);
-      LOG.warn("bg", "req-send-failed", { reqId: id, type });
+      LOG.warn("bg", "req-send-failed", { reqId: id, type: payload.type });
       reject("send failed");
     }
   });
+}
+
+function callBridge(type, text, reqId) {
+  LOG.debug("bg", "req-send", { reqId, type, textLen: (text || "").length });
+  return callBridgeRaw({ type, text }, reqId, REQUEST_TIMEOUT_MS);
+}
+
+function callBridgeFile(filename, data, reqId) {
+  LOG.debug("bg", "req-send-file", { reqId, filenameLen: (filename || "").length, dataLen: (data || "").length });
+  return callBridgeRaw({ type: "anonymize_file", filename, data }, reqId, FILE_REQUEST_TIMEOUT_MS);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -266,6 +278,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   LOG.debug("bg", "tab-msg-recv", { tabId: sender && sender.tab && sender.tab.id, type: msg.type, reqId: msg.reqId });
   if (msg.type === "anonymize" || msg.type === "restore") {
     callBridge(msg.type, msg.text || "", msg.reqId)
+      .then((reply) => sendResponse({ ok: true, reply }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "anonymize_file") {
+    callBridgeFile(msg.filename || "", msg.data || "", msg.reqId)
       .then((reply) => sendResponse({ ok: true, reply }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;

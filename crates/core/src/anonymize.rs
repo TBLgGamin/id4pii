@@ -323,6 +323,59 @@ pub fn anonymize_into<S: SurrogateStore>(
     result
 }
 
+#[derive(Debug, Clone)]
+pub struct Placement {
+    pub start: usize,
+    pub end: usize,
+    pub surrogate: String,
+}
+
+#[must_use]
+pub fn anonymize_placements<S: SurrogateStore>(
+    text: &str,
+    spans: &[PiiSpan],
+    rng: &mut Rng,
+    store: &mut S,
+) -> (Vec<Placement>, Vec<(String, String)>) {
+    let mut ordered: Vec<&PiiSpan> = spans.iter().collect();
+    ordered.sort_by_key(|span| span.start);
+
+    let mut placements: Vec<Placement> = Vec::new();
+    let mut subs: Vec<(String, String)> = Vec::new();
+    let mut cursor = 0;
+    for span in ordered {
+        if span.start < cursor || span.end > text.len() || span.start > span.end {
+            continue;
+        }
+        let fake = store.surrogate_for(span.category, &span.text, rng);
+        placements.push(Placement {
+            start: span.start,
+            end: span.end,
+            surrogate: fake.clone(),
+        });
+        subs.push((span.text.clone(), fake));
+        cursor = span.end;
+    }
+    (placements, subs)
+}
+
+#[must_use]
+pub fn apply_placements(text: &str, placements: &[Placement]) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for placement in placements {
+        if let Some(prefix) = text.get(cursor..placement.start) {
+            result.push_str(prefix);
+        }
+        result.push_str(&placement.surrogate);
+        cursor = placement.end;
+    }
+    if let Some(rest) = text.get(cursor..) {
+        result.push_str(rest);
+    }
+    result
+}
+
 #[must_use]
 pub fn anonymize_with_subs<S: SurrogateStore>(
     text: &str,
@@ -330,28 +383,8 @@ pub fn anonymize_with_subs<S: SurrogateStore>(
     rng: &mut Rng,
     store: &mut S,
 ) -> (String, Vec<(String, String)>) {
-    let mut ordered: Vec<&PiiSpan> = spans.iter().collect();
-    ordered.sort_by_key(|span| span.start);
-
-    let mut result = String::with_capacity(text.len());
-    let mut subs: Vec<(String, String)> = Vec::new();
-    let mut cursor = 0;
-    for span in ordered {
-        if span.start < cursor || span.end > text.len() || span.start > span.end {
-            continue;
-        }
-        if let Some(prefix) = text.get(cursor..span.start) {
-            result.push_str(prefix);
-        }
-        let fake = store.surrogate_for(span.category, &span.text, rng);
-        result.push_str(&fake);
-        subs.push((span.text.clone(), fake));
-        cursor = span.end;
-    }
-    if let Some(rest) = text.get(cursor..) {
-        result.push_str(rest);
-    }
-    (result, subs)
+    let (placements, subs) = anonymize_placements(text, spans, rng, store);
+    (apply_placements(text, &placements), subs)
 }
 
 #[must_use]
