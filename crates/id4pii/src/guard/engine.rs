@@ -3,11 +3,11 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
-use id4pii_core::{
+use crate::{
     Detector, PiiSpan, Placement, Rng, Vault, anonymize_placements, anonymize_with_subs,
     apply_placements, deanonymize,
 };
+use anyhow::{Context, Result, anyhow};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::automation;
@@ -840,7 +840,7 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 mod tests {
     use std::sync::mpsc::{Receiver, sync_channel};
 
-    use id4pii_core::{Category, PiiSpan};
+    use crate::{Category, PiiSpan};
 
     use super::super::store::MemoryStore;
     use super::*;

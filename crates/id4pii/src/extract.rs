@@ -2,8 +2,8 @@
 
 use std::io::{Cursor, Read, Write};
 
+use crate::{Placement, apply_placements};
 use anyhow::{Context, Result, anyhow, bail};
-use id4pii_core::{Placement, apply_placements};
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::reader::Reader;

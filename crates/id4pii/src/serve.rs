@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
+use crate::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
 use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use id4pii_core::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;

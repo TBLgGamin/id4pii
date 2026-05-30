@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::model_dir;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
-use id4pii_core::model_dir;
 use serde::Serialize;
 
 const CHROME_EXTENSIONS_KEY_64: &str = r"Software\Wow6432Node\Google\Chrome\Extensions";
@@ -16,9 +16,9 @@ const CHROME_UPDATE_URL: &str = "https://clients2.google.com/service/update2/crx
 pub(crate) struct InstallArgs {
     #[arg(long, default_value_t = true)]
     with_model: bool,
-    #[arg(long, default_value_os_t = id4pii_core::model_dir::default_dir())]
+    #[arg(long, default_value_os_t = crate::model_dir::default_dir())]
     model_dir: PathBuf,
-    #[arg(long, default_value = id4pii_core::model_dir::DEFAULT_MODEL_FILE)]
+    #[arg(long, default_value = crate::model_dir::DEFAULT_MODEL_FILE)]
     model_file: String,
     #[arg(long)]
     register_extension: Option<String>,
@@ -40,9 +40,9 @@ pub(crate) struct UninstallArgs {
 pub(crate) struct DoctorArgs {
     #[arg(long)]
     extension_id: Option<String>,
-    #[arg(long, default_value_os_t = id4pii_core::model_dir::default_dir())]
+    #[arg(long, default_value_os_t = crate::model_dir::default_dir())]
     model_dir: PathBuf,
-    #[arg(long, default_value = id4pii_core::model_dir::DEFAULT_MODEL_FILE)]
+    #[arg(long, default_value = crate::model_dir::DEFAULT_MODEL_FILE)]
     model_file: String,
     #[arg(long, default_value_t = 7878)]
     bridge_port: u16,
@@ -91,7 +91,7 @@ pub(crate) fn run_uninstall(args: &UninstallArgs) -> Result<()> {
 
 fn id4pii_data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(root) = id4pii_core::paths::data_root() {
+    if let Some(root) = crate::paths::data_root() {
         dirs.push(root);
     }
     let legacy = PathBuf::from("model");

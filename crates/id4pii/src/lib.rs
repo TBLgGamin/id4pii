@@ -3,6 +3,7 @@
     clippy::missing_panics_doc,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::module_name_repetitions
 )]
 
@@ -15,6 +16,18 @@ pub mod model_dir;
 pub mod model_fetch;
 pub mod paths;
 mod redact;
+
+pub mod batch;
+pub mod cli;
+pub mod extract;
+#[cfg(windows)]
+pub mod guard;
+#[cfg(windows)]
+pub mod install;
+pub mod logging;
+pub mod model_setup;
+pub mod progress;
+pub mod serve;
 
 pub use anonymize::{
     IndexedVault, Placement, Rng, SurrogateStore, Vault, VaultEntry, anonymize, anonymize_into,

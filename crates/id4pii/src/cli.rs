@@ -1,11 +1,11 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use id4pii_core::{
+use crate::{
     Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, model_dir, redact,
 };
+use anyhow::{Context, Result};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::{batch, logging, model_setup, serve};

@@ -19,8 +19,8 @@ pub fn init_cli() {
 }
 
 pub fn init_guard(also_stderr: bool) -> Result<PathBuf> {
-    let dir = id4pii_core::paths::log_dir()
-        .context("could not resolve the id4pii data directory for logs")?;
+    let dir =
+        crate::paths::log_dir().context("could not resolve the id4pii data directory for logs")?;
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
 
     let appender = RollingFileAppender::builder()

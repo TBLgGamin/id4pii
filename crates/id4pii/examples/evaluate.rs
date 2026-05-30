@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use id4pii_core::eval::{Example, Report, evaluate, load_tsv};
-use id4pii_core::{Detector, PiiSpan, model_dir, regex_scan};
+use id4pii::eval::{Example, Report, evaluate, load_tsv};
+use id4pii::{Detector, PiiSpan, model_dir, regex_scan};
 
 fn dataset_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/pii_dataset.tsv")

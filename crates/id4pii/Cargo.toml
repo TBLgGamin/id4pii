@@ -1,5 +1,5 @@
 [package]
-name = "id4pii-app"
+name = "id4pii"
 version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [lib]
-name = "id4pii_app"
+name = "id4pii"
 path = "src/lib.rs"
 
 [[bin]]
@@ -20,20 +20,24 @@ path = "src/bin/id4pii_guard.rs"
 
 [features]
 
-cuda = ["id4pii-core/cuda"]
-directml = ["id4pii-core/directml"]
+cuda = ["ort/cuda"]
+directml = ["ort/directml"]
 
 [dependencies]
-id4pii-core.workspace = true
+ort.workspace = true
+tiktoken-rs.workspace = true
+regex.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tokio.workspace = true
 anyhow.workspace = true
-tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 clap.workspace = true
 axum = { workspace = true, features = ["ws"] }
-serde = { workspace = true }
-serde_json.workspace = true
 indicatif.workspace = true
 futures-util = "0.3"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
@@ -54,6 +58,14 @@ windows.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+tiktoken-rs.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false
 
 [lints]
 workspace = true

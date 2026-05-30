@@ -26,9 +26,9 @@ use self::store::DpapiStore;
 
 #[derive(Args, Debug)]
 pub(crate) struct GuardArgs {
-    #[arg(long, env = "ID4PII_MODEL", default_value_os_t = id4pii_core::model_dir::default_dir())]
+    #[arg(long, env = "ID4PII_MODEL", default_value_os_t = crate::model_dir::default_dir())]
     pub(crate) model: PathBuf,
-    #[arg(long, default_value = id4pii_core::model_dir::DEFAULT_MODEL_FILE)]
+    #[arg(long, default_value = crate::model_dir::DEFAULT_MODEL_FILE)]
     pub(crate) model_file: String,
     #[arg(long, default_value_t = 0)]
     pub(crate) threads: usize,
@@ -50,7 +50,7 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
 
     std::thread::Builder::new()
         .name("id4pii-pool-warmup".into())
-        .spawn(id4pii_core::warm_up_pools)
+        .spawn(crate::warm_up_pools)
         .ok();
 
     let mut bus = EventBus::new();
@@ -124,7 +124,7 @@ pub(crate) fn run(args: &GuardArgs) -> Result<()> {
         format!("Browser bridge: ws://127.0.0.1:{}/ws", args.bridge_port)
     };
     let bridge_item = MenuItem::new(bridge_label, false, None);
-    let log_dir = id4pii_core::paths::log_dir();
+    let log_dir = crate::paths::log_dir();
     let log_file_path = log_dir.as_ref().map(|d| d.join("guard.log"));
     let show_log_item = MenuItem::new("Open log file", log_file_path.is_some(), None);
     let open_log_folder_item = MenuItem::new("Open log folder", log_dir.is_some(), None);

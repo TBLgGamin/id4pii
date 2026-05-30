@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::{Vault, VaultEntry};
 use anyhow::{Context, Result, anyhow, bail};
-use id4pii_core::{Vault, VaultEntry};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
@@ -58,7 +58,7 @@ impl DpapiStore {
     }
 
     pub(crate) fn default_path() -> Result<PathBuf> {
-        let path = id4pii_core::paths::vault_file().context("could not resolve %LOCALAPPDATA%")?;
+        let path = crate::paths::vault_file().context("could not resolve %LOCALAPPDATA%")?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -235,7 +235,7 @@ impl VaultStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use id4pii_core::{Category, VaultEntry};
+    use crate::{Category, VaultEntry};
 
     fn sample_vault() -> Vault {
         Vault {
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn vault_round_trips_across_two_sessions() {
-        use id4pii_core::{Category, PiiSpan, Rng, anonymize_into, deanonymize};
+        use crate::{Category, PiiSpan, Rng, anonymize_into, deanonymize};
 
         let store = MemoryStore::new();
 

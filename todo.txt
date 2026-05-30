@@ -1,2 +1,5 @@
 magic numbers, consolidate them
 also loads of different internal protocols, cli anonymizefile, text use workflow to make it a singular or like 2 so we simplify the architecture and it automatically handles windowing batching detect corpus e.g. goes about different quantities and shapes of text efficiently
+
+
+

@@ -10,8 +10,8 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use id4pii_core::eval::{Example, load_tsv};
-use id4pii_core::{
+use id4pii::eval::{Example, load_tsv};
+use id4pii::{
     Category, IndexedVault, PiiSpan, Rng, SurrogateStore, Vault, VaultEntry, anonymize_with_subs,
     deanonymize, regex_scan,
 };

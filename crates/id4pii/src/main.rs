@@ -1,3 +1,3 @@
 fn main() -> anyhow::Result<()> {
-    id4pii_app::cli::run()
+    id4pii::cli::run()
 }

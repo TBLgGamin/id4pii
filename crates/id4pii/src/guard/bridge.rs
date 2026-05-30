@@ -4,6 +4,7 @@ use std::sync::mpsc::{Receiver as StdReceiver, SyncSender as StdSyncSender, sync
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::Vault;
 use anyhow::{Context, Result};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -13,7 +14,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use base64::{Engine as _, prelude::BASE64_STANDARD};
 use futures_util::{SinkExt, StreamExt};
-use id4pii_core::Vault;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};

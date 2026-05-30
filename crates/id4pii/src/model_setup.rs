@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::model_dir;
+use crate::model_fetch::{self, FetchProgress};
 use anyhow::{Context, Result};
-use id4pii_core::model_dir;
-use id4pii_core::model_fetch::{self, FetchProgress};
 use indicatif::{ProgressBar, ProgressStyle};
 
 pub(crate) fn ensure_model(dir: &Path, model_file: &str) -> Result<()> {

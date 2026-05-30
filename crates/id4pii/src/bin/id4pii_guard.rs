@@ -2,7 +2,7 @@
 
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
-    id4pii_app::cli::run_guard_bin()
+    id4pii::cli::run_guard_bin()
 }
 
 #[cfg(not(windows))]

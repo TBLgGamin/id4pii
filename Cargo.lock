@@ -1657,7 +1657,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
-name = "id4pii-app"
+name = "id4pii"
 version = "0.2.0"
 dependencies = [
  "anyhow",
@@ -1665,17 +1665,22 @@ dependencies = [
  "axum",
  "base64",
  "clap",
+ "criterion",
  "enigo",
  "futures-util",
  "global-hotkey",
- "id4pii-core",
  "indicatif",
+ "ort",
  "pdf-extract",
  "quick-xml",
+ "regex",
+ "reqwest",
  "resvg",
  "serde",
  "serde_json",
  "tao",
+ "thiserror 2.0.18",
+ "tiktoken-rs",
  "tiny-skia",
  "tokio",
  "tracing",
@@ -1686,21 +1691,6 @@ dependencies = [
  "windows 0.59.0",
  "winresource",
  "zip",
-]
-
-[[package]]
-name = "id4pii-core"
-version = "0.2.0"
-dependencies = [
- "criterion",
- "ort",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tiktoken-rs",
- "tracing",
 ]
 
 [[package]]

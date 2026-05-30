@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use id4pii_core::eval::{evaluate, load_tsv};
-use id4pii_core::{Category, regex_scan};
+use id4pii::eval::{evaluate, load_tsv};
+use id4pii::{Category, regex_scan};
 
-fn corpus() -> Vec<id4pii_core::eval::Example> {
+fn corpus() -> Vec<id4pii::eval::Example> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/pii_dataset.tsv");
     load_tsv(&path).expect("load committed corpus")
 }
@@ -31,7 +31,7 @@ fn regex_prepass_meets_quality_floor() {
     let report = evaluate(&examples, regex_scan);
 
     let idx = |c: Category| {
-        id4pii_core::eval::CATEGORIES
+        id4pii::eval::CATEGORIES
             .iter()
             .position(|&x| x == c)
             .unwrap()

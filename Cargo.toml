@@ -9,7 +9,6 @@ license = "MIT"
 repository = "https://github.com/TBLgGamin/id4pii"
 
 [workspace.dependencies]
-id4pii-core = { path = "crates/core" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "2"

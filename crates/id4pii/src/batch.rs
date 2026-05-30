@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 
+use crate::{Detector, IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
-use id4pii_core::{Detector, IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -524,8 +524,8 @@ impl<R: BufRead> Iterator for LineSource<R> {
 #[cfg(test)]
 mod tests {
     use super::{Kind, LineKind, LineSource, Record, RenderCtx, frame};
+    use crate::RedactStyle;
     use crate::batch::BatchOp;
-    use id4pii_core::RedactStyle;
     use serde_json::{Value, json};
 
     fn collect(kind: LineKind, input: &str) -> Vec<Record> {
