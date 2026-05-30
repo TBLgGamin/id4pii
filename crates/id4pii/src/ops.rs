@@ -28,8 +28,7 @@ pub(crate) struct AnonymizeArgs {
     text: Option<String>,
     #[arg(short, long)]
     file: Option<PathBuf>,
-    /// Output file. Required when `--file` is a document (.docx/.pptx/.xlsx/.pdf),
-    /// which is rewritten as the same file type; ignored for plain text.
+
     #[arg(short, long)]
     output: Option<PathBuf>,
     #[arg(long)]

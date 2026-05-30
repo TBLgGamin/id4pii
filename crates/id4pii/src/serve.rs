@@ -91,9 +91,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Detect against the shared model thread. Runs at `min_score = 0.0` so a
-/// single batch can pool requests carrying different thresholds; each handler
-/// filters its own response.
 async fn detect(state: &AppState, text: String) -> std::result::Result<Vec<PiiSpan>, ApiError> {
     let service = state.service.clone();
     let mut batches = tokio::task::spawn_blocking(move || service.submit(vec![text], 0.0))
@@ -177,7 +174,7 @@ async fn anonymize_file_route(
                 .map_err(|e| format!("base64 decode failed: {e}"))?;
             let mut rng = request.seed.map_or_else(Rng::from_entropy, Rng::new);
             let mut vault = Vault::default();
-            // Detect at 0.0 (shared-batch threshold invariant) and filter here.
+
             let (output, count) = crate::document::anonymize_document(
                 &bytes,
                 &request.filename,

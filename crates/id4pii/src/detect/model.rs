@@ -172,13 +172,6 @@ impl ModelDetector {
         Ok((tokens, offsets))
     }
 
-    /// Run detection over a batch of texts, auto-windowing long inputs and
-    /// length-sorting every window so each `run` pads tightly.
-    ///
-    /// `batch_override` pins the sequences-per-`run`; `None` derives it
-    /// adaptively from sequence length (see [`Self::plan_batch`]). Output is
-    /// independent of window order and batch composition — padding is masked,
-    /// so each row decodes in isolation.
     pub(crate) fn detect_batch(
         &mut self,
         texts: &[&str],
@@ -197,11 +190,6 @@ impl ModelDetector {
         Ok(out)
     }
 
-    /// Adaptive batch size for a chunk whose longest (padded) sequence is
-    /// `seq_len`: pack as many rows as fit a fixed token budget, so long
-    /// windows run few-at-a-time (bounding the `heads × seq × seq` attention
-    /// tensor) while short ones pack densely to amortise the fixed per-`run`
-    /// cost. Capped by the provider (GPU bucketing tolerates wider batches).
     fn plan_batch(&self, seq_len: usize) -> usize {
         let cap = if self.bucket_shapes {
             GPU_WINDOW_BATCH
@@ -220,8 +208,6 @@ impl ModelDetector {
         let label_count = self.labels.len();
         let mut start = 0;
         while start < windows.len() {
-            // Windows are sorted longest-first, so the head of the remaining
-            // slice is the chunk's max length — pad/bucket the chunk to it.
             let max_len = windows[start].tokens.len();
             if max_len == 0 {
                 start += 1;

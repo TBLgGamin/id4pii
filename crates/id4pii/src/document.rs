@@ -75,9 +75,6 @@ const MIME_PPTX: &str = "application/vnd.openxmlformats-officedocument.presentat
 const MIME_XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const MIME_PDF: &str = "application/pdf";
 
-/// True if `filename`'s extension is one this module can anonymize in place
-/// (same file type in, same out). Lets a caller route documents to
-/// [`anonymize_document`] and everything else to the plain text path.
 #[must_use]
 pub fn is_document(filename: &str) -> bool {
     let ext = filename
@@ -88,11 +85,6 @@ pub fn is_document(filename: &str) -> bool {
     matches!(ext.as_str(), "docx" | "pptx" | "xlsx" | "pdf")
 }
 
-/// Plan a document, detect PII in its concatenated text via `detect`, anonymize
-/// into `store`, and rewrite it back as the **same file type**. Returns the
-/// rewritten bytes + MIME and the number of spans replaced. The single
-/// orchestration shared by the CLI, the HTTP API, and (in spirit) the daemon
-/// bridge — fail-closed: any plan/rewrite error propagates, no partial output.
 pub fn anonymize_document<S, D>(
     bytes: &[u8],
     filename: &str,

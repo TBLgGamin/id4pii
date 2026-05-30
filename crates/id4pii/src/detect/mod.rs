@@ -60,19 +60,10 @@ impl Detector {
         self.use_regex = enabled;
     }
 
-    /// Pin the inference batch size (sequences per ONNX `run`).
-    ///
-    /// `None` (the default) lets [`Detector::detect_batch`] choose the batch
-    /// size adaptively from the input's sequence lengths — small for long
-    /// windows (to bound the attention tensor), large for short ones (to
-    /// amortise the fixed per-`run` cost). Pass `Some(n)` to force a fixed
-    /// size for throughput tuning.
     pub fn set_batch_override(&mut self, batch: Option<usize>) {
         self.batch_override = batch;
     }
 
-    /// Detect PII in a single text. Convenience wrapper over
-    /// [`Detector::detect_batch`].
     pub fn detect(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
         Ok(self
             .detect_batch(std::slice::from_ref(&text), min_score)?
@@ -81,14 +72,6 @@ impl Detector {
             .unwrap_or_default())
     }
 
-    /// Detect PII across many texts in one smart pass.
-    ///
-    /// This is the single detection entry point. It runs the regex pre-pass,
-    /// masks the structural hits, then feeds the shortened texts to the model,
-    /// which internally windows long inputs, length-sorts the windows, and
-    /// batches them adaptively (GPU-bucketed when a GPU provider is active).
-    /// A lone short text and a multi-GB corpus take the same call — the engine
-    /// picks the strategy. Detection of an empty input is empty.
     pub fn detect_batch(&mut self, texts: &[&str], min_score: f32) -> Result<Vec<Vec<PiiSpan>>> {
         if !self.use_regex {
             return self

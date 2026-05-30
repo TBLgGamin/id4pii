@@ -102,7 +102,7 @@ pub(crate) fn run(args: &CorpusArgs) -> Result<()> {
         &args.model.model_file,
         args.model.threads,
     )?;
-    // `--batch` pins the inference batch size; default (None) is adaptive.
+
     detector.set_batch_override(args.batch);
     let (service, model_handle) = DetectorService::spawn(detector, Coalesce::Off, CHANNEL_DEPTH)?;
 
@@ -118,7 +118,7 @@ pub(crate) fn run(args: &CorpusArgs) -> Result<()> {
         .name("id4pii-batch-reader".to_string())
         .spawn(move || reader_loop(source, shard_records, min_score, &reader_service, &pair_tx))
         .context("failed to spawn reader thread")?;
-    // Drop our handle so the model thread winds down once the reader's clone is gone.
+
     drop(service);
 
     let mut vault = IndexedVault::new();
@@ -130,8 +130,6 @@ pub(crate) fn run(args: &CorpusArgs) -> Result<()> {
         style: args.style.into(),
     };
 
-    // Drain shards in submission order; each shard's spans arrive on its own
-    // reply channel, so the shared vault mints surrogates in record order.
     let mut docs = 0usize;
     while let Ok((records, reply)) = pair_rx.recv() {
         let spans = reply
@@ -192,8 +190,6 @@ fn reader_loop(
     let _ = submit_shard(service, pair_tx, min_score, shard);
 }
 
-/// Queue a shard for detection and hand the writer its records paired with the
-/// reply channel. Returns `false` once the downstream has hung up.
 fn submit_shard(
     service: &DetectorService,
     pair_tx: &SyncSender<(Vec<Record>, Receiver<SpansResult>)>,

@@ -13,38 +13,19 @@ struct Job {
     reply: SyncSender<SpansResult>,
 }
 
-/// How the model thread groups queued jobs into a single inference.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Coalesce {
-    /// Run each submitted job as its own inference, in submission order.
-    /// Preserves a caller's own batching and backpressure (the corpus
-    /// pipeline relies on this to stream a multi-GB corpus and to mint
-    /// shared-vault surrogates in record order).
     Off,
-    /// Opportunistically merge up to `cap` queued jobs into one inference,
-    /// coalescing concurrent load with no added latency for a lone request
-    /// (the HTTP server).
+
     UpTo(usize),
 }
 
-/// A [`Detector`] living on one dedicated thread, fed by a bounded queue.
-///
-/// This is the single place the "exactly one inference thread" rule (the ORT
-/// intra-op deadlock guard) is enforced. Both the HTTP server and the corpus
-/// pipeline submit text batches here; the only difference is the [`Coalesce`]
-/// policy. Submission is request/reply over a per-job channel, so callers can
-/// either block ([`Self::submit`]) or fire-and-collect-later
-/// ([`Self::submit_async`]) while staying in FIFO order.
 #[derive(Clone)]
 pub(crate) struct DetectorService {
     tx: SyncSender<Job>,
 }
 
 impl DetectorService {
-    /// Spawn the model thread owning `detector`. The returned [`JoinHandle`]
-    /// completes once every clone of the service is dropped (closing the
-    /// queue); a streaming caller drops its handle and joins to drain, a
-    /// long-lived server just keeps it.
     pub(crate) fn spawn(
         mut detector: Detector,
         coalesce: Coalesce,
@@ -61,8 +42,6 @@ impl DetectorService {
         )
     }
 
-    /// Spawn over an arbitrary "texts + threshold -> spans" function. The
-    /// production constructor wraps a [`Detector`]; tests inject a fake.
     fn spawn_with<F>(
         run: F,
         coalesce: Coalesce,
@@ -79,7 +58,6 @@ impl DetectorService {
         Ok((Self { tx }, handle))
     }
 
-    /// Queue a batch and return a receiver for its spans without blocking.
     pub(crate) fn submit_async(
         &self,
         texts: Vec<String>,
@@ -96,7 +74,6 @@ impl DetectorService {
         Ok(rx)
     }
 
-    /// Queue a batch and block until its spans are ready.
     pub(crate) fn submit(&self, texts: Vec<String>, min_score: f32) -> SpansResult {
         self.submit_async(texts, min_score)?
             .recv()
@@ -111,11 +88,6 @@ where
     while let Ok(first) = rx.recv() {
         let mut jobs = vec![first];
         if let Coalesce::UpTo(cap) = coalesce {
-            // Drain whatever else is already queued into one inference.
-            // Coalesced jobs share a threshold by construction: `serve` always
-            // submits min_score = 0.0 (and filters per-request afterwards), and
-            // the corpus pipeline uses Coalesce::Off — so the batch runs at the
-            // first job's threshold.
             while jobs.len() < cap {
                 match rx.try_recv() {
                     Ok(job) => jobs.push(job),
@@ -161,9 +133,6 @@ mod tests {
     use crate::{Category, PiiSpan};
     use std::sync::mpsc::sync_channel;
 
-    // Encode the batch position in `start` (an integer, so assertions avoid
-    // float comparison) so a reply can be traced back to the exact texts it
-    // should have received.
     fn marker(pos: usize) -> PiiSpan {
         PiiSpan {
             category: Category::PrivatePerson,
@@ -174,8 +143,6 @@ mod tests {
         }
     }
 
-    // One single-span Vec per input text, marked by its position in the
-    // (possibly coalesced) batch. The `Result` return matches the run-fn seam.
     #[allow(clippy::unnecessary_wraps)]
     fn positional_run(texts: &[&str], _min_score: f32) -> SpansResult {
         Ok(texts
@@ -206,11 +173,11 @@ mod tests {
 
         let a = a_rx.recv().unwrap().unwrap();
         let b = b_rx.recv().unwrap().unwrap();
-        // Job A asked for 2 texts -> the first 2 results (positions 0,1).
+
         assert_eq!(a.len(), 2);
         assert_eq!(a[0][0].start, 0);
         assert_eq!(a[1][0].start, 1);
-        // Job B asked for 1 text -> the next result (position 2), no bleed-over.
+
         assert_eq!(b.len(), 1);
         assert_eq!(b[0][0].start, 2);
     }

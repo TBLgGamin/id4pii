@@ -21,10 +21,6 @@ pub(crate) fn ensure_model(dir: &Path, model_file: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fetch the model if absent, then load a [`Detector`](crate::Detector).
-///
-/// Every model-backed entry point (`scan`, `anonymize`, `serve`, `batch`)
-/// goes through here so model-presence and loading are wired once.
 pub(crate) fn load_detector(
     dir: &Path,
     model_file: &str,

@@ -35,7 +35,6 @@ enum Command {
     Doctor(install::DoctorArgs),
 }
 
-/// Shared model-loading flags, flattened into every model-backed subcommand.
 #[derive(Args, Debug)]
 pub(crate) struct ModelArgs {
     #[arg(long, env = "ID4PII_MODEL", default_value_os_t = model_dir::default_dir())]
@@ -56,7 +55,6 @@ struct ServeArgs {
     model: ModelArgs,
 }
 
-/// Redaction style, shared by `scan` and `corpus`.
 #[derive(Clone, Copy, ValueEnum, Debug)]
 pub(crate) enum Style {
     Label,
