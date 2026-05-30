@@ -1,9 +1,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use crate::{
-    Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, model_dir, redact,
-};
+use crate::{PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, model_dir, redact};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -158,13 +156,11 @@ pub async fn run() -> Result<()> {
 
 fn run_scan(args: &ScanArgs) -> Result<()> {
     let text = read_input(args.text.as_ref(), args.file.as_ref())?;
-    model_setup::ensure_model(&args.model.model, &args.model.model_file)?;
-    let mut detector = Detector::load(
+    let mut detector = model_setup::load_detector(
         &args.model.model,
         &args.model.model_file,
         args.model.threads,
-    )
-    .context("failed to load model")?;
+    )?;
     let spans = detector
         .detect(&text, args.model.min_score)
         .context("detection failed")?;
@@ -183,13 +179,11 @@ fn run_scan(args: &ScanArgs) -> Result<()> {
 
 fn run_anonymize(args: &AnonymizeArgs) -> Result<()> {
     let text = read_input(args.text.as_ref(), args.file.as_ref())?;
-    model_setup::ensure_model(&args.model.model, &args.model.model_file)?;
-    let mut detector = Detector::load(
+    let mut detector = model_setup::load_detector(
         &args.model.model,
         &args.model.model_file,
         args.model.threads,
-    )
-    .context("failed to load model")?;
+    )?;
     let spans = detector
         .detect(&text, args.model.min_score)
         .context("detection failed")?;

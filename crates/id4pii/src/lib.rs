@@ -21,6 +21,7 @@ pub mod batch;
 pub mod cli;
 #[cfg(windows)]
 pub mod daemon;
+mod detector_service;
 pub mod extract;
 #[cfg(windows)]
 pub mod install;

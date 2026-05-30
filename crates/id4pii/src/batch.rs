@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 
-use crate::{Detector, IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact};
+use crate::{IndexedVault, PiiSpan, RedactStyle, Rng, anonymize_into, redact};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::cli::{ModelArgs, Style};
+use crate::detector_service::{Coalesce, DetectorService, SpansResult};
 use crate::model_setup;
 
 const CHANNEL_DEPTH: usize = 2;
@@ -40,8 +41,8 @@ pub struct BatchArgs {
     vault_out: Option<PathBuf>,
     #[arg(long)]
     seed: Option<u64>,
-    #[arg(long, default_value_t = default_batch())]
-    batch: usize,
+    #[arg(long)]
+    batch: Option<usize>,
     #[arg(long, default_value_t = 256)]
     shard_records: usize,
     #[arg(long, default_value = "text")]
@@ -80,14 +81,6 @@ enum Kind {
     Tsv,
 }
 
-fn default_batch() -> usize {
-    if cfg!(any(feature = "directml", feature = "cuda")) {
-        32
-    } else {
-        8
-    }
-}
-
 struct Record {
     id: String,
     text: String,
@@ -104,39 +97,29 @@ struct ScanLine<'a> {
 
 pub(crate) fn run(args: &BatchArgs) -> Result<()> {
     let kind = resolve_format(args);
-    model_setup::ensure_model(&args.model.model, &args.model.model_file)?;
+    let mut detector = model_setup::load_detector(
+        &args.model.model,
+        &args.model.model_file,
+        args.model.threads,
+    )?;
+    // `--batch` pins the inference batch size; default (None) is adaptive.
+    detector.set_batch_override(args.batch);
+    let (service, model_handle) = DetectorService::spawn(detector, Coalesce::Off, CHANNEL_DEPTH)?;
 
     let source = build_source(args, kind)?;
     let mut sink = build_sink(args, kind)?;
 
-    let (raw_tx, raw_rx) = sync_channel::<Vec<Record>>(CHANNEL_DEPTH);
-    let (res_tx, res_rx) = sync_channel::<(Vec<Record>, Vec<Vec<PiiSpan>>)>(CHANNEL_DEPTH);
+    let (pair_tx, pair_rx) = sync_channel::<(Vec<Record>, Receiver<SpansResult>)>(CHANNEL_DEPTH);
 
     let shard_records = args.shard_records.max(1);
+    let min_score = args.model.min_score;
+    let reader_service = service.clone();
     let reader = thread::Builder::new()
         .name("id4pii-batch-reader".to_string())
-        .spawn(move || reader_loop(source, shard_records, &raw_tx))
+        .spawn(move || reader_loop(source, shard_records, min_score, &reader_service, &pair_tx))
         .context("failed to spawn reader thread")?;
-
-    let model_path = args.model.model.clone();
-    let model_file = args.model.model_file.clone();
-    let threads = args.model.threads;
-    let batch_size = args.batch;
-    let min_score = args.model.min_score;
-    let model_thread = thread::Builder::new()
-        .name("id4pii-batch-model".to_string())
-        .spawn(move || {
-            model_loop(
-                &model_path,
-                &model_file,
-                threads,
-                batch_size,
-                min_score,
-                &raw_rx,
-                &res_tx,
-            )
-        })
-        .context("failed to spawn model thread")?;
+    // Drop our handle so the model thread winds down once the reader's clone is gone.
+    drop(service);
 
     let mut vault = IndexedVault::new();
     let mut rng = args.seed.map_or_else(Rng::from_entropy, Rng::new);
@@ -147,8 +130,15 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
         style: args.style.into(),
     };
 
+    // Drain shards in submission order; each shard's spans arrive on its own
+    // reply channel, so the shared vault mints surrogates in record order.
     let mut docs = 0usize;
-    while let Ok((records, spans)) = res_rx.recv() {
+    while let Ok((records, reply)) = pair_rx.recv() {
+        let spans = reply
+            .recv()
+            .map_err(|_| anyhow!("detector dropped a shard"))?
+            .map_err(|message| anyhow!(message))
+            .context("detection failed")?;
         for (record, spans) in records.iter().zip(&spans) {
             let content = render(&ctx, record, spans, &mut vault, &mut rng)?;
             sink.put(&record.id, &content)?;
@@ -156,12 +146,12 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
         }
     }
 
-    model_thread
-        .join()
-        .map_err(|_| anyhow!("model thread panicked"))??;
     reader
         .join()
         .map_err(|_| anyhow!("reader thread panicked"))?;
+    model_handle
+        .join()
+        .map_err(|_| anyhow!("model thread panicked"))?;
     sink.finish()?;
 
     let entries = vault.len();
@@ -177,7 +167,13 @@ pub(crate) fn run(args: &BatchArgs) -> Result<()> {
     Ok(())
 }
 
-fn reader_loop(source: Source, shard_records: usize, raw_tx: &SyncSender<Vec<Record>>) {
+fn reader_loop(
+    source: Source,
+    shard_records: usize,
+    min_score: f32,
+    service: &DetectorService,
+    pair_tx: &SyncSender<(Vec<Record>, Receiver<SpansResult>)>,
+) {
     let mut shard = Vec::with_capacity(shard_records);
     for item in source {
         match item {
@@ -185,7 +181,7 @@ fn reader_loop(source: Source, shard_records: usize, raw_tx: &SyncSender<Vec<Rec
                 shard.push(record);
                 if shard.len() >= shard_records {
                     let batch = std::mem::replace(&mut shard, Vec::with_capacity(shard_records));
-                    if raw_tx.send(batch).is_err() {
+                    if !submit_shard(service, pair_tx, min_score, batch) {
                         return;
                     }
                 }
@@ -193,34 +189,25 @@ fn reader_loop(source: Source, shard_records: usize, raw_tx: &SyncSender<Vec<Rec
             Err(error) => tracing::warn!(%error, "skipping unreadable record"),
         }
     }
-    if !shard.is_empty() {
-        let _ = raw_tx.send(shard);
-    }
+    let _ = submit_shard(service, pair_tx, min_score, shard);
 }
 
-fn model_loop(
-    model: &Path,
-    model_file: &str,
-    threads: usize,
-    batch_size: usize,
+/// Queue a shard for detection and hand the writer its records paired with the
+/// reply channel. Returns `false` once the downstream has hung up.
+fn submit_shard(
+    service: &DetectorService,
+    pair_tx: &SyncSender<(Vec<Record>, Receiver<SpansResult>)>,
     min_score: f32,
-    raw_rx: &Receiver<Vec<Record>>,
-    res_tx: &SyncSender<(Vec<Record>, Vec<Vec<PiiSpan>>)>,
-) -> Result<()> {
-    let mut detector =
-        Detector::load(model, model_file, threads).context("failed to load model")?;
-    detector.set_batch_override(Some(batch_size));
-    while let Ok(records) = raw_rx.recv() {
-        let texts: Vec<&str> = records.iter().map(|record| record.text.as_str()).collect();
-        let spans = detector
-            .detect_batch(&texts, min_score)
-            .context("detection failed")?;
-        drop(texts);
-        if res_tx.send((records, spans)).is_err() {
-            break;
-        }
+    shard: Vec<Record>,
+) -> bool {
+    if shard.is_empty() {
+        return true;
     }
-    Ok(())
+    let texts: Vec<String> = shard.iter().map(|record| record.text.clone()).collect();
+    match service.submit_async(texts, min_score) {
+        Ok(reply) => pair_tx.send((shard, reply)).is_ok(),
+        Err(_) => false,
+    }
 }
 
 struct RenderCtx<'a> {

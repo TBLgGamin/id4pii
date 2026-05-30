@@ -21,6 +21,19 @@ pub(crate) fn ensure_model(dir: &Path, model_file: &str) -> Result<()> {
     Ok(())
 }
 
+/// Fetch the model if absent, then load a [`Detector`](crate::Detector).
+///
+/// Every model-backed entry point (`scan`, `anonymize`, `serve`, `batch`)
+/// goes through here so model-presence and loading are wired once.
+pub(crate) fn load_detector(
+    dir: &Path,
+    model_file: &str,
+    threads: usize,
+) -> Result<crate::Detector> {
+    ensure_model(dir, model_file)?;
+    crate::Detector::load(dir, model_file, threads).context("failed to load model")
+}
+
 #[derive(Default)]
 struct CliProgress {
     bar: Option<ProgressBar>,

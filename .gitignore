@@ -8,3 +8,10 @@
 /extension/assets/
 /dist/
 /installer/dist/
+
+# local e2e scratch
+e2e_corpus.txt
+e2e_batch.jsonl
+e2e_batch.err
+e2e_*.txt
+e2e_*.jsonl

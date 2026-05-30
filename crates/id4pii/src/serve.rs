@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::{Detector, PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
 use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -8,21 +7,17 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
+use crate::detector_service::{Coalesce, DetectorService};
+use crate::{PiiSpan, RedactStyle, Rng, Vault, anonymize, deanonymize, redact};
+
 const MAX_REQUEST_BATCH: usize = 16;
-
-type DetectResult = std::result::Result<Vec<PiiSpan>, String>;
-
-struct DetectJob {
-    text: String,
-    reply: oneshot::Sender<DetectResult>,
-}
+const QUEUE_DEPTH: usize = 256;
 
 #[derive(Clone)]
 struct AppState {
-    jobs: mpsc::UnboundedSender<DetectJob>,
+    service: DetectorService,
     min_score: f32,
 }
 
@@ -76,50 +71,16 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn spawn_batcher(mut detector: Detector, mut rx: mpsc::UnboundedReceiver<DetectJob>) -> Result<()> {
-    std::thread::Builder::new()
-        .name("id4pii-detect-batcher".to_string())
-        .spawn(move || {
-            while let Some(first) = rx.blocking_recv() {
-                let mut jobs = vec![first];
-                while jobs.len() < MAX_REQUEST_BATCH {
-                    match rx.try_recv() {
-                        Ok(job) => jobs.push(job),
-                        Err(_) => break,
-                    }
-                }
-                let texts: Vec<&str> = jobs.iter().map(|job| job.text.as_str()).collect();
-                let outcome = detector.detect_batch(&texts, 0.0);
-                drop(texts);
-                match outcome {
-                    Ok(results) => {
-                        for (job, spans) in jobs.into_iter().zip(results) {
-                            let _ = job.reply.send(Ok(spans));
-                        }
-                    }
-                    Err(err) => {
-                        let message = err.to_string();
-                        for job in jobs {
-                            let _ = job.reply.send(Err(message.clone()));
-                        }
-                    }
-                }
-            }
-        })
-        .context("failed to spawn detect batcher thread")?;
-    Ok(())
-}
-
+/// Detect against the shared model thread. Runs at `min_score = 0.0` so a
+/// single batch can pool requests carrying different thresholds; each handler
+/// filters its own response.
 async fn detect(state: &AppState, text: String) -> std::result::Result<Vec<PiiSpan>, ApiError> {
-    let (reply, response) = oneshot::channel();
-    state
-        .jobs
-        .send(DetectJob { text, reply })
-        .map_err(|_| ApiError("detector unavailable".to_string()))?;
-    response
+    let service = state.service.clone();
+    let mut batches = tokio::task::spawn_blocking(move || service.submit(vec![text], 0.0))
         .await
-        .map_err(|_| ApiError("detector dropped the request".to_string()))?
-        .map_err(ApiError)
+        .map_err(|_| ApiError("detector task panicked".to_string()))?
+        .map_err(ApiError)?;
+    Ok(batches.pop().unwrap_or_default())
 }
 
 pub(crate) async fn run(
@@ -129,11 +90,10 @@ pub(crate) async fn run(
     threads: usize,
     min_score: f32,
 ) -> Result<()> {
-    crate::model_setup::ensure_model(&model, &model_file)?;
-    let detector = Detector::load(&model, &model_file, threads).context("failed to load model")?;
-    let (jobs, rx) = mpsc::unbounded_channel();
-    spawn_batcher(detector, rx)?;
-    let state = AppState { jobs, min_score };
+    let detector = crate::model_setup::load_detector(&model, &model_file, threads)?;
+    let (service, _handle) =
+        DetectorService::spawn(detector, Coalesce::UpTo(MAX_REQUEST_BATCH), QUEUE_DEPTH)?;
+    let state = AppState { service, min_score };
 
     let app = Router::new()
         .route("/health", get(health))
