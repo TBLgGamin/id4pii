@@ -80,6 +80,17 @@ impl Detector {
         self.model.detect(text, min_score)
     }
 
+    #[must_use]
+    pub fn recommended_window_batch(&self) -> usize {
+        self.model.recommended_window_batch()
+    }
+
+    pub fn detect_windowed(&mut self, text: &str, min_score: f32) -> Result<Vec<PiiSpan>> {
+        let batch_size = self.recommended_window_batch();
+        let results = self.detect_corpus(&[text], min_score, batch_size)?;
+        Ok(results.into_iter().next().unwrap_or_default())
+    }
+
     pub fn detect_batch(&mut self, texts: &[&str], min_score: f32) -> Result<Vec<Vec<PiiSpan>>> {
         self.detect_many(texts, min_score, None)
     }

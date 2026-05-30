@@ -21,6 +21,8 @@ const DETECT_OVERLAP: usize = 128;
 
 const MAX_BATCH: usize = 4;
 
+const GPU_WINDOW_BATCH: usize = 32;
+
 const SEQ_BUCKETS: [usize; 5] = [64, 128, 256, 512, DETECT_WINDOW];
 
 const DEFAULT_INTRA_THREADS: usize = 2;
@@ -125,6 +127,14 @@ impl ModelDetector {
             bucket_shapes,
             token_len: HashMap::new(),
         })
+    }
+
+    pub(crate) fn recommended_window_batch(&self) -> usize {
+        if self.bucket_shapes {
+            GPU_WINDOW_BATCH
+        } else {
+            MAX_BATCH
+        }
     }
 
     fn token_byte_len(&mut self, token: u32) -> Result<usize> {
